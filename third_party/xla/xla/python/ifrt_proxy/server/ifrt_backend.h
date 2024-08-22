@@ -114,6 +114,9 @@ class IfrtBackend final : public BackendInterface {
   Future<Response> HandleCheckFutureRequest(
       std::unique_ptr<IfrtRequest> request);
 
+  Future<Response> HandleCheckValueReadyRequest(
+      std::unique_ptr<IfrtRequest> request);
+
   absl::StatusOr<Response> HandleMakeArrayFromHostBufferRequest(
       std::unique_ptr<IfrtRequest> request);
   absl::StatusOr<Response> HandleAssembleArrayFromSingleDeviceArraysRequest(
@@ -124,11 +127,11 @@ class IfrtBackend final : public BackendInterface {
       std::unique_ptr<IfrtRequest> request);
   absl::StatusOr<Response> HandleDisassembleIntoSingleDeviceArraysRequest(
       std::unique_ptr<IfrtRequest> request);
+  absl::StatusOr<Response> HandleCopyArraysRequest(
+      std::unique_ptr<IfrtRequest> request);
   absl::StatusOr<Response> HandleReshardRequest(
       std::unique_ptr<IfrtRequest> request);
   absl::StatusOr<Response> HandleFullyReplicatedShardRequest(
-      std::unique_ptr<IfrtRequest> request);
-  Future<Response> HandleCheckArrayReadyRequest(
       std::unique_ptr<IfrtRequest> request);
   absl::StatusOr<Response> HandleDeleteArrayRequest(
       std::unique_ptr<IfrtRequest> request);

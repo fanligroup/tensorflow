@@ -22,20 +22,23 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_STREAM_H_
 
 #include <cstdint>
+#include <memory>
+#include <utility>
 #include <variant>
 
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/event.h"
+#include "xla/stream_executor/event_based_timer.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
-#include "xla/stream_executor/stream_executor_pimpl.h"
 
 namespace stream_executor {
 
@@ -78,12 +81,15 @@ class Stream {
   // implementation without blocking the stream.
   //
   // Normally, Stream::BlockHostUntilDone is used to get execution status.
-  // However, some devices use out-of-band mechnanisms to ensure their streams
+  // However, some devices use out-of-band mechanisms to ensure their streams
   // have finished on-device work, without needing to block the streams. (These
   // devices should also override AllowsSyncOnCompletion to return false.) For
   // these devices, this method can be used after work is finished to retrieve
   // execution status.
-  virtual absl::Status RefreshStatus() = 0;
+  virtual absl::Status RefreshStatus() {
+    return absl::UnimplementedError(
+        "RefreshStatus is not supported on this stream.");
+  }
 
   // Get or create a sub-stream from this stream. If there is any sub-stream in
   // the pool that can be reused then just return this sub-stream.  Otherwise
@@ -190,22 +196,31 @@ class Stream {
   // of the given target size. gpu_src/dst must be pointers to GPU memory and
   // peer access must be enabled between their owning StreamExecutors.
   virtual absl::Status Memcpy(DeviceMemoryBase *gpu_dst,
-                              const DeviceMemoryBase &gpu_src,
-                              uint64_t size) = 0;
+                              const DeviceMemoryBase &gpu_src, uint64_t size) {
+    return absl::UnimplementedError(
+        "Memcpy from device to device is not implemented for this "
+        "stream.");
+  }
+
   absl::Status MemcpyD2D(DeviceMemoryBase *gpu_dst,
                          const DeviceMemoryBase &gpu_src, uint64_t size) {
     return Memcpy(gpu_dst, gpu_src, size);
   }
 
-  // Entrain onto the stream: a memset of zero at a GPU location of size bytes.
-  // The location must not be null.
-  virtual absl::Status MemZero(DeviceMemoryBase *location, uint64_t size) = 0;
+  // Entrain onto the stream: a memset of zero at a device location of size
+  // bytes. The location must not be null.
+  virtual absl::Status MemZero(DeviceMemoryBase *location, uint64_t size) {
+    return absl::UnimplementedError("MemZero is not supported on this stream.");
+  }
 
-  // Entrain onto the stream: a memset of a 32-bit pattern at a GPU location of
+  // Entrain onto the stream: a memset of a 32-bit pattern at device location of
   // size bytes, where bytes must be evenly 32-bit sized (i.e. evenly divisible
   // by 4). The location must not be null.
   virtual absl::Status Memset32(DeviceMemoryBase *location, uint32_t pattern,
-                                uint64_t size) = 0;
+                                uint64_t size) {
+    return absl::UnimplementedError(
+        "Memset32 is not supported on this stream.");
+  }
 
   // (Synchronously) block the host code waiting for the operations
   // entrained on the stream (enqueued to this point in program
@@ -222,8 +237,12 @@ class Stream {
   // This is kept for backward compatibility. Future code should use
   // DoHostCallbackWithStatus and explicitly return a success status.
   // TODO(b/112125301): Eventually remove this method.
-  virtual absl::Status DoHostCallback(
-      absl::AnyInvocable<void() &&> callback) = 0;
+  absl::Status DoHostCallback(absl::AnyInvocable<void() &&> callback) {
+    return DoHostCallbackWithStatus([cb = std::move(callback)]() mutable {
+      std::move(cb)();
+      return absl::OkStatus();
+    });
+  }
 
   // Entrains onto the stream a callback to the host (from the device).
   // Host callbacks block/occupy the stream just as device functions
@@ -253,7 +272,38 @@ class Stream {
   // platform driver.
   virtual absl::Status Launch(const ThreadDim &thread_dims,
                               const BlockDim &block_dims, const Kernel &k,
-                              const KernelArgs &args) = 0;
+                              const KernelArgs &args) {
+    return absl::UnimplementedError("Not implemented");
+  }
+
+  // Launches a data parallel kernel with the given thread/block
+  // dimensionality and already-packed args/sizes to pass to the underlying
+  // platform driver.
+  virtual absl::Status Launch(const ThreadDim &thread_dims,
+                              const BlockDim &block_dims,
+                              const ClusterDim &cluster_dims, const Kernel &k,
+                              const KernelArgs &args) {
+    return absl::UnimplementedError("Not implemented");
+  }
+
+  // Get/set a name for a stream, which can be shown in profiling tools
+  virtual absl::string_view name() const = 0;
+  virtual void set_name(absl::string_view name) = 0;
+
+  // Create an EventBasedTimer that can be used to time operations on this
+  // stream using Events.
+  //
+  // If use_delay_kernel is true, the timer will launch a delay kernel into the
+  // stream and queue a start event immediately afterwards. This delay kernel
+  // blocks execution on the stream until EventBasedTimer::GetElapsedDuration()
+  // is called, at which point an end event is queued and the delay kernel
+  // exits. This allows the device execution time of the tasks queued to the
+  // stream while the timer is active to be measured more accurately.
+  virtual absl::StatusOr<std::unique_ptr<EventBasedTimer>>
+  CreateEventBasedTimer(bool use_delay_kernel) {
+    return absl::UnimplementedError(
+        "This stream does not support EventBasedTimers.");
+  }
 };
 
 template <typename... Params, typename... Args>

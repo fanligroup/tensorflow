@@ -34,6 +34,18 @@ def IsNchwLayoutOp: Constraint<CPred<
 
 def IsNhwcLayoutOp: Constraint<Neg<IsNchwLayoutOp.predicate>>;
 
+class HasRank<int n> : Constraint<
+    CPred<"$0.getType().cast<ShapedType>().hasRank() && "
+          "$0.getType().cast<ShapedType>().getRank() == " # n>>;
+
+class HasRankAtLeast<int n> : Constraint<
+    CPred<"$0.getType().cast<ShapedType>().hasRank() && "
+          "$0.getType().cast<ShapedType>().getRank() >= " # n>>;
+
+def I32ElementsVal : Constraint<CPred<
+  "$0.getType().cast<TensorType>().getElementType().isInteger(32)">,
+  "32 bit integer tensor">;
+
 // TODO(b/343278954): Move the creation of transposes to a separate prepare pass
 // to avoid creating multiple pattern-rewrite rules for the same composite op.
 def LegalizeTorchUpsampleBlinear2dComposite: Pat<
@@ -61,7 +73,7 @@ def LegalizeNhwcResizeNearestNeighbor2dComposite: Pat<
     (TFL_ResizeNearestNeighborOp
       $input,
       (Arith_ConstantOp:$output_size (GetI32DenseAttr (GetAsVectorAttr<"size"> $attrs))),
-      (GetCompositeAttributeAs<"align_corners", "BoolAttr"> $attrs),
+      ConstBoolAttrFalse,
       ConstBoolAttrTrue),
     [(IsNhwcLayoutOp $attrs)]>;
 
@@ -79,14 +91,32 @@ def LegalizeNchwResizeNearestNeighbor2dComposite: Pat<
           (Arith_ConstantOp
             ConstantAttr<RankedI32ElementsAttr<[4]>,"{0, 2, 3, 1}">)),
         (Arith_ConstantOp:$output_size (GetI32DenseAttr (GetAsVectorAttr<"size"> $attrs))),
-        (GetCompositeAttributeAs<"align_corners", "BoolAttr"> $attrs),
+        ConstBoolAttrFalse,
         ConstBoolAttrTrue,
         (returnType (GetNhwcReturnTypeFromNchw $old_val))),
       (Arith_ConstantOp
         ConstantAttr<RankedI32ElementsAttr<[4]>,"{0, 3, 1, 2}">)),
     [(IsNchwLayoutOp $attrs)]>;
 
-def LegalizeCompositeGELU : Pat<(MHLO_CompositeOp:$composite 
-                                  (variadic $inputs), 
-                                  ConstantStrAttr<StrAttr, "odml.internal.gelu">, $_, $_, $_),
-                                (TFL_GeluOp $inputs, ConstBoolAttrFalse)>;
+def LegalizeCompositeExactAtenGELU : Pat<
+        (MHLO_CompositeOp:$composite
+          (variadic $inputs),
+          ConstantStrAttr<StrAttr, "aten.gelu.default">, $attrs, $_, $_),
+        (TFL_GeluOp $inputs, ConstBoolAttrFalse),
+        [(IsStrCompositeAttribute<"approximate", "none"> $attrs)]>;
+
+def LegalizeCompositeApproximateAtenGELU : Pat<
+        (MHLO_CompositeOp:$composite
+          (variadic $inputs),
+          ConstantStrAttr<StrAttr, "aten.gelu.default">, $attrs, $_, $_),
+        (TFL_GeluOp $inputs, ConstBoolAttrTrue),
+        [(IsStrCompositeAttribute<"approximate", "tanh"> $attrs)]>;
+
+def LegalizeCompositeOdmlEmbeddingLookup : Pat<
+        (MHLO_CompositeOp:$composite
+          (variadic $indices, $table),
+          ConstantStrAttr<StrAttr, "odml.embedding_lookup">, $attrs, $_, $_),
+        (TFL_EmbeddingLookupOp $indices, $table),
+        [(HasRank<1> $indices),
+        (I32ElementsVal $indices),
+        (HasRankAtLeast<2> $table)]>;

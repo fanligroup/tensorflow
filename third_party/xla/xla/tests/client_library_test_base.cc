@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "xla/client/client_library.h"
 #include "xla/client/local_client.h"
@@ -29,7 +30,6 @@ limitations under the License.
 #include "xla/service/platform_util.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/statusor.h"
 #include "xla/test_helpers.h"
 #include "tsl/platform/logging.h"
 
@@ -96,6 +96,12 @@ ClientLibraryTestBase::ClientLibraryTestBase(se::Platform* platform)
 
   execution_options_.mutable_debug_options()
       ->set_xla_hlo_evaluator_use_fast_path(true);
+}
+
+std::string ClientLibraryTestBase::SuiteName() const {
+  return ::testing::UnitTest::GetInstance()
+      ->current_test_info()
+      ->test_suite_name();
 }
 
 std::string ClientLibraryTestBase::TestName() const {

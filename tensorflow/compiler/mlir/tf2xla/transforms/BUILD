@@ -129,8 +129,8 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:Pass",
-        "@local_tsl//tsl/lib/core:status_test_util",
         "@local_tsl//tsl/platform:statusor",
+        "@local_xla//xla/tsl/lib/core:status_test_util",
     ],
 )
 
@@ -142,6 +142,12 @@ cc_library(
     ],
     hdrs = [
         "passes.h",
+    ],
+    # DEPRECATED: use v2/legalize_tf.h::LegalizeMlirToHlo instead.
+    visibility = [
+        "//tensorflow/compiler/mlir/lite/stablehlo:__pkg__",
+        "//tensorflow/compiler/mlir/tensorflow/transforms:__pkg__",
+        "//tensorflow/compiler/mlir/tf2xla/internal/passes:__pkg__",
     ],
     deps = [
         ":legalize_tf_patterns_inc_gen",
@@ -384,7 +390,6 @@ tf_cc_test(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TransformUtils",
-        "@local_tsl//tsl/lib/core:status_test_util",
         "@local_tsl//tsl/platform:errors",
         "@local_tsl//tsl/platform:status",
         "@local_tsl//tsl/platform:statusor",
@@ -393,6 +398,7 @@ tf_cc_test(
         "@local_xla//xla/client:xla_builder",
         "@local_xla//xla/client:xla_computation",
         "@local_xla//xla/mlir_hlo",
+        "@local_xla//xla/tsl/lib/core:status_test_util",
     ],
 )
 
@@ -501,8 +507,8 @@ tf_cc_test(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@local_tsl//tsl/lib/core:status_test_util",
         "@local_tsl//tsl/platform:status",
         "@local_tsl//tsl/platform:statusor",
+        "@local_xla//xla/tsl/lib/core:status_test_util",
     ],
 )

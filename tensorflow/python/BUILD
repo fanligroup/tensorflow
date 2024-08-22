@@ -693,7 +693,6 @@ pywrap_tensorflow_macro(
         "@com_googlesource_code_re2//:__subpackages__",
         "@compute_library//:__subpackages__",
         "@cpuinfo//:__subpackages__",
-        "@cudnn_frontend_archive//:__subpackages__",
         "@curl//:__subpackages__",
         "@dlpack//:__subpackages__",
         "@double_conversion//:__subpackages__",
@@ -933,8 +932,6 @@ filegroup(
         "//tensorflow/core/util/tensor_bundle",  # checkpoint_reader
         "//tensorflow/dtensor/cc:dtensor_device_cc",  # DTensor
         "//tensorflow/dtensor/cc:tensor_layout",  # DTensor
-        "//tensorflow/lite/kernels/shim:shape",  # tf_text
-        "//tensorflow/lite/kernels/shim:tf_op_shim",  # tf_text
         "//tensorflow/lite/toco/python:toco_python_api",  # toco
         "//tensorflow/python/client:tf_session_helper",  # tf_session
         "//tensorflow/python/eager:pywrap_tfe_lib",  # pywrap_tfe_lib

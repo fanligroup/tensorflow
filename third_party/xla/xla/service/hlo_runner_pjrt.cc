@@ -24,6 +24,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/client/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -38,7 +39,6 @@ limitations under the License.
 #include "xla/shape_layout.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/statusor.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
@@ -369,7 +369,9 @@ absl::StatusOr<std::unique_ptr<Executable>> HloRunnerPjRt::CreateExecutable(
                       CreateExecutable(module.get(), compile_options));
 
   auto executable = std::make_unique<PjRtWrappedExecutable>(
-      std::shared_ptr<HloModule>(std::move(module)), pjrt_executable.release());
+      std::shared_ptr<HloModule>(
+          std::move(pjrt_executable->GetHloModules().value()[0])),
+      pjrt_executable.release());
 
   std::unique_ptr<Executable> exec =
       static_cast<std::unique_ptr<Executable>>(executable.release());

@@ -89,6 +89,7 @@ class MultiHeadedAttentionTest : public GpuCodegenTest {
   DebugOptions GetDebugOptionsForTest() override {
     auto debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_cudnn_fmha(true);
+    debug_options.clear_xla_gpu_enable_command_buffer();
     return debug_options;
   }
 
@@ -132,6 +133,45 @@ class MultiHeadedAttentionTest : public GpuCodegenTest {
 
     EXPECT_TRUE(
         LiteralTestUtil::Near(expected_result, actual_result, mha_error_spec_));
+
+    // Run through command buffer
+    DebugOptions debug_options = GetDebugOptionsForTest();
+    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
+    debug_options.set_xla_gpu_graph_min_graph_size(1);
+    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> test_cmd_buffer_module,
+                            ParseAndReturnVerifiedModule(hlo_string));
+    test_cmd_buffer_module->mutable_config().set_debug_options(debug_options);
+    const Literal cmd_buffer_actual_result =
+        ExecuteAndTransfer(std::move(test_cmd_buffer_module), literals);
+    EXPECT_TRUE(LiteralTestUtil::Near(expected_result, cmd_buffer_actual_result,
+                                      mha_error_spec_));
+  }
+
+  void VerifyBackwardDeterminism(absl::string_view hlo_string,
+                                 const std::vector<Literal *> &literals,
+                                 bool force_deterministic = false) {
+    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> reference_module,
+                            ParseAndReturnVerifiedModule(hlo_string));
+    DebugOptions debug_options = GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_enable_cudnn_fmha(true);
+    if (force_deterministic) {
+      debug_options.set_xla_gpu_exclude_nondeterministic_ops(true);
+    }
+    reference_module->mutable_config().set_debug_options(debug_options);
+    const Literal first_run_result =
+        ExecuteAndTransfer(reference_module->Clone(), literals);
+
+    const Literal second_run_result =
+        ExecuteAndTransfer(std::move(reference_module), literals);
+
+    ErrorSpec error_spec{1E-8, 1e-8};
+    if (force_deterministic) {
+      EXPECT_TRUE(LiteralTestUtil::Near(first_run_result, second_run_result,
+                                        error_spec));
+    } else {
+      EXPECT_FALSE(LiteralTestUtil::Near(first_run_result, second_run_result,
+                                         error_spec));
+    }
   }
 
   template <typename T>
@@ -353,8 +393,8 @@ class FlashAttentionBMMScaleCausalMaskSoftmaxBMM
   void TestImpl_Flash_Attention_BMM1_CausalMask_Softmax_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
     if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(8, 9, 4)) {
-      GTEST_SKIP() << "Flash Attention requires cuDNN >= 8.9.4.";
+        se::dnn::VersionInfo(9, 0, 0)) {
+      GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
     XlaBuilder builder(TestName());
     auto lhs_bmm1_literal =
@@ -374,8 +414,8 @@ class FlashAttentionBMMScaleCausalMaskSoftmaxBMM
   void TestImpl_Flash_Attention_Training_BMM1_CausalMask_Softmax_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
     if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(8, 9, 4)) {
-      GTEST_SKIP() << "Flash Attention requires cuDNN >= 8.9.4.";
+        se::dnn::VersionInfo(9, 0, 0)) {
+      GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
     XlaBuilder builder(TestName());
     auto lhs_bmm1_literal =
@@ -669,8 +709,8 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
   void TestImpl_Flash_Attention_BMM1_Bias_Softmax_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
     if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(8, 9, 4)) {
-      GTEST_SKIP() << "Flash Attention requires cuDNN >= 8.9.4.";
+        se::dnn::VersionInfo(9, 0, 0)) {
+      GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
     XlaBuilder builder(TestName());
     auto lhs_bmm1_literal =
@@ -691,8 +731,8 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
   void TestImpl_Flash_Attention_Training_BMM1_Bias_Softmax_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
     if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(8, 9, 4)) {
-      GTEST_SKIP() << "Flash Attention requires cuDNN >= 8.9.4.";
+        se::dnn::VersionInfo(9, 0, 0)) {
+      GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
     XlaBuilder builder(TestName());
     auto lhs_bmm1_literal =
@@ -716,9 +756,9 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
   void TestImpl_Flash_Attention_BMM1_Bias_Softmax_BMM2_Cross_Attention() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
     if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(8, 9, 4)) {
+        se::dnn::VersionInfo(9, 0, 0)) {
       GTEST_SKIP() << "Flash Attention cross attention requires "
-                      "cuDNN >= 8.9.4.";
+                      "cuDNN >= 9.0.0.";
     }
     XlaBuilder builder(TestName());
     auto lhs_bmm1_literal =
@@ -740,10 +780,10 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
     auto cc = GetCudaComputeCapability();
     if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-            se::dnn::VersionInfo(8, 9, 6) ||
+            se::dnn::VersionInfo(9, 0, 0) ||
         !cc.IsAtLeastHopper() || cc.minor != 0) {
       GTEST_SKIP()
-          << "Flash Attention dbias requires cuDNN >= 8.9.6 and Hopper arch.";
+          << "Flash Attention dbias requires cuDNN >= 9.0.0 and Hopper arch.";
     }
     XlaBuilder builder(TestName());
     auto lhs_bmm1_literal =
@@ -860,8 +900,8 @@ class FlashAttentionBMMScaleSoftmaxBMM : public MultiHeadedAttentionTest {
   void TestImpl_Flash_Attention_Training_BMM1_Softmax_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
     if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(8, 9, 4)) {
-      GTEST_SKIP() << "Flash Attention requires cuDNN >= 8.9.4.";
+        se::dnn::VersionInfo(9, 0, 0)) {
+      GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
     XlaBuilder builder(TestName());
     auto lhs_bmm1_literal =
@@ -878,6 +918,37 @@ class FlashAttentionBMMScaleSoftmaxBMM : public MultiHeadedAttentionTest {
         hlo_string,
         {&lhs_bmm1_literal, &rhs_bmm1_literal, &rhs_bmm2_literal, &do_literal},
         /*expected_num_fmha_calls=*/2);
+  }
+
+  template <typename T>
+  void TestImpl_Flash_Attention_Training_BMM1_Softmax_BMM2_Deterministic() {
+    if (skip_reason_) GTEST_SKIP() << *skip_reason_;
+    auto cc = GetCudaComputeCapability();
+    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
+            se::dnn::VersionInfo(9, 0, 0) ||
+        !cc.IsAtLeastHopper() || cc.minor != 0) {
+      GTEST_SKIP() << "Flash Attention deterministic kernels requires cuDNN >= "
+                      "9.0.0 and Hopper arch.";
+    }
+    XlaBuilder builder(TestName());
+    auto lhs_bmm1_literal =
+        GetInput4DLiteral<T>({2, 6, 1024, 64}, {3, 2, 1, 0});
+    auto rhs_bmm1_literal =
+        GetInput4DLiteral<T>({2, 6, 64, 1024}, {3, 2, 1, 0});
+    auto rhs_bmm2_literal =
+        GetInput4DLiteral<T>({2, 6, 1024, 64}, {3, 2, 1, 0});
+    auto do_literal = GetInput4DLiteral<T>({2, 6, 1024, 64}, {3, 2, 1, 0});
+    std::string hlo_string = "";
+    hlo_string =
+        GetModuleFlash_Attention_Training_BMM1_Softmax_BMM2_HloString_BF16();  // NOLINT
+    VerifyBackwardDeterminism(
+        hlo_string,
+        {&lhs_bmm1_literal, &rhs_bmm1_literal, &rhs_bmm2_literal, &do_literal},
+        /*force_deterministic=*/true);
+    VerifyBackwardDeterminism(
+        hlo_string,
+        {&lhs_bmm1_literal, &rhs_bmm1_literal, &rhs_bmm2_literal, &do_literal},
+        /*force_deterministic=*/false);
   }
 };
 
@@ -1014,8 +1085,8 @@ class FlashAttentionBMMScalePaddingMaskSoftmaxBMM
   void TestImpl_Flash_Attention_Training_BMM1_PaddingMask_Softmax_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
     if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(8, 9, 3)) {
-      GTEST_SKIP() << "Flash Attention requires cuDNN >= 8.9.3.";
+        se::dnn::VersionInfo(9, 0, 0)) {
+      GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
     XlaBuilder builder(TestName());
     // pass padding mask as bias
@@ -1028,6 +1099,95 @@ class FlashAttentionBMMScalePaddingMaskSoftmaxBMM
         GetModuleFlash_Attention_Training_BMM1_PaddingMask_Generation_Softmax_BMM2_HloString_BF16();  // NOLINT
     EXPECT_TRUE(RunAndCompareTwoModules(hlo_string, hlo_string_ref,
                                         ErrorSpec{1e-5, 1e-5}));
+  }
+};
+
+class FlashAttentionBMMScalePaddingMaskSoftmaxBMMF8
+    : public MultiHeadedAttentionTest {
+ protected:
+  void TestImpl_Flash_Attention_Inference_BMM1_NoMask_Softmax_BMM2_F8() {
+    if (skip_reason_) GTEST_SKIP() << *skip_reason_;
+    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
+        se::dnn::VersionInfo(9, 1, 0)) {
+      GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.1.0.";
+    }
+    XlaBuilder builder(TestName());
+    std::string hlo_string_ref =
+        R"(
+    HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0})->bf16[4,4,16,16]{3,1,2,0}}, allow_spmd_sharding_propagation_to_parameters={true,true,true}, allow_spmd_sharding_propagation_to_output={true}
+    clip.33 {
+      Arg_2.36 = bf16[] parameter(2)
+      broadcast.39 = bf16[4,16,4,16]{3,2,1,0} broadcast(Arg_2.36), dimensions={}
+      Arg_1.35 = bf16[] parameter(1)
+      broadcast.37 = bf16[4,16,4,16]{3,2,1,0} broadcast(Arg_1.35), dimensions={}
+      Arg_0.34 = bf16[4,16,4,16]{3,2,1,0} parameter(0)
+      maximum.38 = bf16[4,16,4,16]{3,2,1,0} maximum(broadcast.37, Arg_0.34)
+      ROOT minimum.40 = bf16[4,16,4,16]{3,2,1,0} minimum(broadcast.39, maximum.38)
+    } // clip.33
+    ENTRY main.106 {
+      Arg_0.1 = bf16[4,16,4,16]{3,2,1,0} parameter(0)
+      constant.6 = bf16[] constant(1)
+      broadcast.7 = bf16[4,16,4,16]{3,2,1,0} broadcast(constant.6), dimensions={}
+      divide.8 = bf16[4,16,4,16]{3,2,1,0} divide(Arg_0.1, broadcast.7)
+      constant.5 = bf16[] constant(-448)
+      constant.4 = bf16[] constant(448)
+      call.17 = bf16[4,16,4,16]{3,2,1,0} call(divide.8, constant.5, constant.4), to_apply=clip.33
+      convert.18 = f8e4m3fn[4,16,4,16]{3,2,1,0} convert(call.17)
+      convert.19 = bf16[4,16,4,16]{3,2,1,0} convert(convert.18)
+      Arg_1.2 = bf16[4,16,4,16]{3,2,1,0} parameter(1)
+      divide.20 = bf16[4,16,4,16]{3,2,1,0} divide(Arg_1.2, broadcast.7)
+      call.29 = bf16[4,16,4,16]{3,2,1,0} call(divide.20, constant.5, constant.4), to_apply=clip.33
+      convert.30 = f8e4m3fn[4,16,4,16]{3,2,1,0} convert(call.29)
+      convert.31 = bf16[4,16,4,16]{3,2,1,0} convert(convert.30)
+      Arg_2.3 = bf16[4,16,4,16]{3,2,1,0} parameter(2)
+      divide.32 = bf16[4,16,4,16]{3,2,1,0} divide(Arg_2.3, broadcast.7)
+      call.41 = bf16[4,16,4,16]{3,2,1,0} call(divide.32, constant.5, constant.4), to_apply=clip.33
+      convert.42 = f8e4m3fn[4,16,4,16]{3,2,1,0} convert(call.41)
+      convert.43 = bf16[4,16,4,16]{3,2,1,0} convert(convert.42)
+      custom-call.4.0 = (bf16[4,4,16,16]{3,1,2,0}, u8[16]{0}) custom-call(convert.19, convert.31, convert.43), custom_call_target="__cudnn$fmhaSoftmax", operand_layout_constraints={bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0}}, api_version=API_VERSION_STATUS_RETURNING, backend_config={"operation_queue_id": "0", "wait_on_operation_queues": [], "cudnn_fmha_backend_config": {"algorithm": {"algo_id": "0", "math_type": "TENSOR_OP_MATH", "tuning_knobs": {"17": "1", "24": "0"}, "is_cudnn_frontend": true, "workspace_size": "0"}, "fmha_scale": 1.0, "dropout_rate": 0.0, "intermediate_tensor_shape": {"element_type": "BF16", "dimensions": ["4", "4", "16", "16"], "tuple_shapes": [], "layout": {"dim_level_types": [], "dim_unique": [], "dim_ordered": [], "minor_to_major": ["3", "2", "1", "0"], "tiles": [], "element_size_in_bits": "0", "memory_space": "0", "index_primitive_type": "PRIMITIVE_TYPE_INVALID", "pointer_primitive_type": "PRIMITIVE_TYPE_INVALID", "dynamic_shape_metadata_prefix_bytes": "0"}, "is_dynamic_dimension": [false, false, false, false]}, "seed": 42, "is_flash_attention": true, "mask_type": "NO_MASK", "bmm1_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["3"], "lhs_batch_dimensions": ["0", "2"], "rhs_batch_dimensions": ["0", "2"]}, "bmm2_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["1"], "lhs_batch_dimensions": ["0", "1"], "rhs_batch_dimensions": ["0", "2"]}}}
+      ROOT get-tuple-element.5.0 = bf16[4,4,16,16]{3,1,2,0} get-tuple-element(custom-call.4.0), index=0
+    } // main.106
+  )";  // NOLINT
+    std::string hlo_string = R"(
+    HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0})->bf16[4,4,16,16]{3,1,2,0}}, allow_spmd_sharding_propagation_to_parameters={true,true,true}, allow_spmd_sharding_propagation_to_output={true}
+    clip.33 {
+      Arg_2.36 = bf16[] parameter(2)
+      broadcast.39 = bf16[4,16,4,16]{3,2,1,0} broadcast(Arg_2.36), dimensions={}
+      Arg_1.35 = bf16[] parameter(1)
+      broadcast.37 = bf16[4,16,4,16]{3,2,1,0} broadcast(Arg_1.35), dimensions={}
+      Arg_0.34 = bf16[4,16,4,16]{3,2,1,0} parameter(0)
+      maximum.38 = bf16[4,16,4,16]{3,2,1,0} maximum(broadcast.37, Arg_0.34)
+      ROOT minimum.40 = bf16[4,16,4,16]{3,2,1,0} minimum(broadcast.39, maximum.38)
+    } // clip.33
+    ENTRY main.106 {
+      constant.99 = f32[] constant(1)
+      broadcast.99 = f32[1,1,1,1]{3,2,1,0} broadcast(constant.99), dimensions={}
+      Arg_0.1 = bf16[4,16,4,16]{3,2,1,0} parameter(0)
+      constant.6 = bf16[] constant(1)
+      broadcast.7 = bf16[4,16,4,16]{3,2,1,0} broadcast(constant.6), dimensions={}
+      divide.8 = bf16[4,16,4,16]{3,2,1,0} divide(Arg_0.1, broadcast.7)
+      constant.5 = bf16[] constant(-448)
+      constant.4 = bf16[] constant(448)
+      call.17 = bf16[4,16,4,16]{3,2,1,0} call(divide.8, constant.5, constant.4), to_apply=clip.33
+      convert.18 = f8e4m3fn[4,16,4,16]{3,2,1,0} convert(call.17)
+      convert.19 = bf16[4,16,4,16]{3,2,1,0} convert(convert.18)
+      Arg_1.2 = bf16[4,16,4,16]{3,2,1,0} parameter(1)
+      divide.20 = bf16[4,16,4,16]{3,2,1,0} divide(Arg_1.2, broadcast.7)
+      call.29 = bf16[4,16,4,16]{3,2,1,0} call(divide.20, constant.5, constant.4), to_apply=clip.33
+      convert.30 = f8e4m3fn[4,16,4,16]{3,2,1,0} convert(call.29)
+      convert.31 = bf16[4,16,4,16]{3,2,1,0} convert(convert.30)
+      Arg_2.3 = bf16[4,16,4,16]{3,2,1,0} parameter(2)
+      divide.32 = bf16[4,16,4,16]{3,2,1,0} divide(Arg_2.3, broadcast.7)
+      call.41 = bf16[4,16,4,16]{3,2,1,0} call(divide.32, constant.5, constant.4), to_apply=clip.33
+      convert.42 = f8e4m3fn[4,16,4,16]{3,2,1,0} convert(call.41)
+      convert.43 = bf16[4,16,4,16]{3,2,1,0} convert(convert.42)
+      custom-call.21.0 = (f8e4m3fn[4,4,16,16]{3,1,2,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, u8[16]{0}) custom-call(convert.18, convert.30, convert.42, broadcast.99, broadcast.99, /*index=5*/broadcast.99, broadcast.99, broadcast.99, broadcast.99), custom_call_target="__cudnn$fmhaSoftmaxF8", operand_layout_constraints={f8e4m3fn[4,16,4,16]{3,2,1,0}, f8e4m3fn[4,16,4,16]{3,2,1,0}, f8e4m3fn[4,16,4,16]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}}
+      get-tuple-element.5.0 = f8e4m3fn[4,4,16,16]{3,1,2,0} get-tuple-element(custom-call.21.0), index=0
+      ROOT out = bf16[4,4,16,16]{3,1,2,0} convert(get-tuple-element.5.0)
+    } // main.106
+  )";  // NOLINT
+    EXPECT_TRUE(RunAndCompareTwoModules(hlo_string, hlo_string_ref,
+                                        ErrorSpec{1e-2, 1e-2}));
   }
 };
 
@@ -1069,10 +1229,21 @@ XLA_TEST_F(FlashAttentionBMMScaleSoftmaxBMM,
   TestImpl_Flash_Attention_Training_BMM1_Softmax_BMM2<bfloat16>();
 }
 
+XLA_TEST_F(FlashAttentionBMMScaleSoftmaxBMM,
+           Flash_Attention_Training_BMM1_Softmax_BMM2_Deterministic_BF16) {
+  TestImpl_Flash_Attention_Training_BMM1_Softmax_BMM2_Deterministic<bfloat16>();
+}
+
 // BMM1 - Scale - PaddingMask - Softmax - BMM2
 XLA_TEST_F(FlashAttentionBMMScalePaddingMaskSoftmaxBMM,
            Flash_Attention_Training_BMM1_PaddingMask_Softmax_BMM2_BF16) {
   TestImpl_Flash_Attention_Training_BMM1_PaddingMask_Softmax_BMM2<bfloat16>();
+}
+
+// BMM1 - Scale - Softmax - BMM2 fp8
+XLA_TEST_F(FlashAttentionBMMScalePaddingMaskSoftmaxBMMF8,
+           Flash_Attention_Inference_BMM1_NoMask_Softmax_BMM2_F8) {
+  TestImpl_Flash_Attention_Inference_BMM1_NoMask_Softmax_BMM2_F8();
 }
 }  // namespace
 }  // namespace gpu

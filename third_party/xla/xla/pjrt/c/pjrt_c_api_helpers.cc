@@ -603,7 +603,7 @@ const std::vector<PJRT_NamedValue>& GetXlaPluginCAttributes() {
   c_value.name_size = kXlaVersion.size();
   c_value.type = PJRT_NamedValue_Type::PJRT_NamedValue_kInt64;
   // TODO(b/327203806): figure out where to keep the xla_version.
-  c_value.int64_value = 1;
+  c_value.int64_value = 2;
   c_value.value_size = 1;
   static const std::vector<PJRT_NamedValue>* c_values =
       new std::vector<PJRT_NamedValue>({c_value});
@@ -994,13 +994,6 @@ absl::Span<PJRT_DeviceDescription* const> DeviceDescriptions(
 
 absl::StatusOr<xla::CompiledMemoryStats> GetCompiledMemoryStats(
     const PJRT_Api* api, PJRT_Executable* executable) {
-  // TODO(jieying): To be removed after 03/2024.
-  if (api->pjrt_api_version.major_version == 0 &&
-      api->pjrt_api_version.minor_version < 40) {
-    return absl::UnimplementedError(
-        "GetCompiledMemoryStats requires a plugin with PJRT C API version >= "
-        "0.40");
-  }
   PJRT_Executable_GetCompiledMemoryStats_Args args;
   args.struct_size = PJRT_Executable_GetCompiledMemoryStats_Args_STRUCT_SIZE;
   args.extension_start = nullptr;

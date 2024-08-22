@@ -38,7 +38,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"  // from @eigen_archive
+#include "Eigen/Core"
 #include "xla/index_util.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -49,11 +49,11 @@ limitations under the License.
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/lib/core/bitmap.h"
 #include "xla/tsl/util/byte_swap_array.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/core/bitmap.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tsl/platform/mem.h"
@@ -252,7 +252,7 @@ Literal::Literal(const Shape& shape)
 void Literal::SetShape(const Shape& shape) {
   Shape shape_storage;
   const Shape* shape_ptr = &shape;
-  if (LayoutUtil::HasCustomElementSizeInBits(shape)) {
+  if (shape.IsArray() && LayoutUtil::HasCustomElementSizeInBits(shape)) {
     shape_storage = shape;
     shape_storage.mutable_layout()->set_element_size_in_bits(0);
     shape_ptr = &shape_storage;
@@ -1891,39 +1891,42 @@ bool LiteralBase::Piece::EqualElements(const LiteralBase::Piece& other) const {
       subshape().element_type());
 }
 
-bool LiteralBase::operator==(const LiteralBase& other) const {
+bool LiteralBase::Equal(const LiteralBase& other, bool layout_sensitive) const {
   // Checking the structure of tuple literals. Checks for dense arrays are
   // performed below.
   if (!ShapeUtil::EqualStructure(shape(), other.shape())) {
     return false;
   }
 
-  return root_piece().ForEachSubpieceWithBool(
-      [&](const ShapeIndex& index, const Piece& piece) {
-        const Piece& other_piece = other.piece(index);
-        const Shape& subshape = piece.subshape();
-        const Shape& other_subshape = other_piece.subshape();
-        if (subshape.element_type() != other_subshape.element_type()) {
-          return false;
-        }
-        if (!piece.subshape().IsArray()) {
-          return true;
-        }
-        if (subshape.rank() != other_subshape.rank()) {
-          return false;
-        }
+  return root_piece().ForEachSubpieceWithBool([&](const ShapeIndex& index,
+                                                  const Piece& piece) {
+    const Piece& other_piece = other.piece(index);
+    const Shape& subshape = piece.subshape();
+    const Shape& other_subshape = other_piece.subshape();
+    if (subshape.element_type() != other_subshape.element_type()) {
+      return false;
+    }
+    if (!piece.subshape().IsArray()) {
+      return true;
+    }
+    if (subshape.rank() != other_subshape.rank()) {
+      return false;
+    }
+    if (layout_sensitive && (subshape.layout() != other_subshape.layout())) {
+      return false;
+    }
 
-        for (int64_t i = 0; i < subshape.rank(); ++i) {
-          if (piece.GetDynamicSize(i) != other_piece.GetDynamicSize(i)) {
-            return false;
-          }
-        }
+    for (int64_t i = 0; i < subshape.rank(); ++i) {
+      if (piece.GetDynamicSize(i) != other_piece.GetDynamicSize(i)) {
+        return false;
+      }
+    }
 
-        if (!piece.EqualElements(other_piece)) {
-          return false;
-        }
-        return true;
-      });
+    if (!piece.EqualElements(other_piece)) {
+      return false;
+    }
+    return true;
+  });
 }
 
 template <typename NativeT>

@@ -2152,7 +2152,13 @@ class DatasetV2(
     # pylint: disable=g-import-not-at-top,protected-access
 
   def map(
-      self, map_func, num_parallel_calls=None, deterministic=None, name=None
+      self,
+      map_func,
+      num_parallel_calls=None,
+      deterministic=None,
+      synchronous=None,
+      use_unbounded_threadpool=False,
+      name=None,
   ) -> "DatasetV2":
     """Maps `map_func` across the elements of this dataset.
 
@@ -2299,6 +2305,20 @@ name=None))
         determinism for performance. If not specified, the
         `tf.data.Options.deterministic` option (`True` by default) controls the
         behavior.
+      synchronous: (Optional.) Whether to force the map transformation to run
+        synchronously. This only matters when
+        `options.experimental_optimization.map_parallelization=True`. That
+        option would normally change the map to run with
+        `num_parallel_calls=tf.data.AUTOTUNE`, but if `synchronous=True` is
+        specified, the map will not be parallelized at all. This is useful for
+        saving memory, since even setting `num_parallel_calls=1` will cause one
+        batch to be buffered, while with `synchronous=True` the map
+        transformation doesn't buffer anything.
+      use_unbounded_threadpool: (Optional.) By default, map functions run in a
+        limited threadpool based on the number of cores on the machine. This
+        efficient for CPU-heavy processing, but if the map function performs IO
+        it is better to use an unbounded threadpool by setting it to `True`. It
+        is `False` by default.
       name: (Optional.) A name for the tf.data operation.
 
     Returns:
@@ -2308,12 +2328,16 @@ name=None))
     # dataset_ops).
     # pylint: disable=g-import-not-at-top,protected-access
     from tensorflow.python.data.ops import map_op
+
     return map_op._map_v2(
         self,
         map_func,
         num_parallel_calls=num_parallel_calls,
         deterministic=deterministic,
-        name=name)
+        synchronous=synchronous,
+        use_unbounded_threadpool=use_unbounded_threadpool,
+        name=name,
+    )
     # pylint: enable=g-import-not-at-top,protected-access
 
   def flat_map(self, map_func, name=None) -> "DatasetV2":
@@ -4069,25 +4093,37 @@ class DatasetV1(DatasetV2, data_types.DatasetV1):
             name=name))
 
   @functools.wraps(DatasetV2.map)
-  def map(self,
-          map_func,
-          num_parallel_calls=None,
-          deterministic=None,
-          name=None):
+  def map(
+      self,
+      map_func,
+      num_parallel_calls=None,
+      deterministic=None,
+      synchronous=None,
+      use_unbounded_threadpool=False,
+      name=None,
+  ):
     # Loaded lazily due to a circular dependency (dataset_ops -> map_op ->
     # dataset_ops).
     # pylint: disable=g-import-not-at-top,protected-access
     from tensorflow.python.data.ops import map_op
+
     return map_op._map_v1(
         self,
         map_func,
         num_parallel_calls=num_parallel_calls,
-        deterministic=deterministic)
+        deterministic=deterministic,
+        synchronous=synchronous,
+        use_unbounded_threadpool=use_unbounded_threadpool,
+    )
     # pylint: enable=g-import-not-at-top,protected-access
 
   @deprecation.deprecated(None, "Use `tf.data.Dataset.map()")
   def map_with_legacy_function(
-      self, map_func, num_parallel_calls=None, deterministic=None
+      self,
+      map_func,
+      num_parallel_calls=None,
+      deterministic=None,
+      use_unbounded_threadpool=False,
   ) -> "DatasetV1Adapter":
     """Maps `map_func` across the elements of this dataset.
 
@@ -4110,6 +4146,11 @@ class DatasetV1(DatasetV2, data_types.DatasetV1):
         elements out of order to trade determinism for performance. If not
         specified, the `tf.data.Options.deterministic` option (`True` by
         default) controls the behavior.
+      use_unbounded_threadpool: (Optional.) By default, map functions run in a
+        limited threadpool based on the number of cores on the machine. This
+        efficient for CPU-heavy processing, but if the map function performs IO
+        it is better to use an unbounded threadpool by setting it to `True`. It
+        is `False` by default.
 
     Returns:
       Dataset: A `Dataset`.

@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -43,8 +44,6 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/printer.h"
 #include "xla/shape.h"
-#include "xla/statusor.h"
-#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
@@ -601,15 +600,51 @@ class ShapeUtil {
   //
   // The visitor function must have the signature
   //
+  //   absl::Status fn(const Shape& subshape, const ShapeIndex& index)
+  //   void fn(Shape* subshape, const ShapeIndex& index) (mutable version)
+  template <typename Fn>
+  static absl::Status ForEachLeafShapeWithStatus(const Shape& shape, Fn&& fn) {
+    return ForEachSubshapeWithStatus(
+        shape, [&](const Shape& subshape, const ShapeIndex& index) {
+          if (IsLeafIndex(shape, index)) {
+            TF_RETURN_IF_ERROR(fn(subshape, index));
+          }
+          return absl::OkStatus();
+        });
+  }
+  template <typename Fn>
+  static absl::Status ForEachMutableLeafShapeWithStatus(Shape* shape, Fn&& fn) {
+    return ForEachMutableSubshapeWithStatus(
+        shape, [&](Shape* subshape, const ShapeIndex& index) {
+          if (IsLeafIndex(*shape, index)) {
+            TF_RETURN_IF_ERROR(fn(subshape, index));
+          }
+          return absl::OkStatus();
+        });
+  }
+
+  // Calls the given visitor function for each leaf subshape of the given shape.
+  // Subshapes are visited in DFS pre-order starting with the entire shape
+  // (index {}).
+  //
+  // The visitor function must have the signature
   //   void fn(const Shape& subshape, const ShapeIndex& index)
+  //   void fn(Shape* subshape, const ShapeIndex& index) (mutable version)
   template <typename Fn>
   static void ForEachLeafShape(const Shape& shape, Fn&& fn) {
-    ForEachSubshape(shape,
-                    [&](const Shape& sub_shape, const ShapeIndex& index) {
-                      if (IsLeafIndex(shape, index)) {
-                        fn(sub_shape, index);
-                      }
-                    });
+    ForEachLeafShapeWithStatus(shape, [&](const Shape& subshape,
+                                          const ShapeIndex& index) {
+      fn(subshape, index);
+      return absl::OkStatus();
+    }).IgnoreError();
+  }
+  template <typename Fn>
+  static void ForEachMutableLeafShape(Shape* shape, Fn&& fn) {
+    ForEachMutableLeafShapeWithStatus(shape, [&](Shape* subshape,
+                                                 const ShapeIndex& index) {
+      fn(subshape, index);
+      return absl::OkStatus();
+    }).IgnoreError();
   }
 
   // Variants of ForEach(Mutable)Subshape which propagate absl::Status from the
@@ -787,7 +822,7 @@ class ShapeUtil {
                                           bool ignore_element_type = false);
 
   // If the given bitcast is a transpose, deduce and return `dimensions`
-  // attribute of such a transpose. Otherwise, return nullptr.
+  // attribute of such a transpose. Otherwise, return std::nullopt.
   static std::optional<std::vector<int64_t>>
   DeduceTransposeDimensionsForBitcast(const Shape& input_shape,
                                       const Shape& output_shape);
@@ -976,10 +1011,9 @@ class ShapeUtil {
       const Shape& shape,
       const ForEachParallelVisitorFunction& visitor_function);
 
-  // In this case, we care about transposes that swap two dimensions of a
-  // a shape that can be viewed as three logical components 0-1-2 in the order
-  // of major to minor.
-  // As an example, let's consider a 0-2-1 transpose:
+  // In this case, we care about transposes that permute dimensions of a shape
+  // that can be viewed as several logical components in the order of major to
+  // minor. As an example, let's consider a 0-2-1 transpose:
   //
   // If a shape can be viewed as three logical components 0-1-2 in the order of
   // major to minor, a 0-2-1-transpose changes the order of such logical
@@ -993,15 +1027,18 @@ class ShapeUtil {
   // should be set to {0, 2, 1}.
   // If `b` is a 0-2-1 transpose of `a` in 0-1-2, return the dimensions for the
   // normalized shape of `b` or the 0-2-1 shape. In general, the
-  // permutation[0]-permutation[1]-permutation[2] shape is returned.
-  static std::optional<Vector3> GetNormalizedTransposeShape(
-      const Shape& input_shape, const Shape& output_shape,
-      const Vector3& permutation);
+  // permutation[0]-permutation[1]-...-permutation[permutation.size()-1] shape
+  // is returned.
+  static std::optional<absl::InlinedVector<int64_t, 3>>
+  GetNormalizedTransposeShape(const Shape& input_shape,
+                              const Shape& output_shape,
+                              absl::InlinedVector<int64_t, 3>& permutation);
 
   // Entry point for physical + logical transposition.
-  static std::optional<Vector3> GetNormalizedLogicalTransposeShape(
-      const Shape& input_shape, const Shape& output_shape,
-      absl::Span<int64_t const> dimensions, const Vector3& permutation);
+  static std::optional<absl::InlinedVector<int64_t, 3>>
+  GetNormalizedLogicalTransposeShape(
+      const Shape& output_shape, absl::Span<int64_t const> dimensions,
+      absl::InlinedVector<int64_t, 3>& permutation);
 
   // Strips device-specific information, namely tiling and memory-space
   // information, from a shape.

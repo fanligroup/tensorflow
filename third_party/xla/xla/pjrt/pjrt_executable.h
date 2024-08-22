@@ -45,7 +45,6 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
-#include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -124,10 +123,6 @@ struct CompileOptions {
   LoadEnvOptionOverrides(
       const google::protobuf::Map<std::string, xla::OptionOverrideProto>&
           env_option_overrides);
-
-  void SerializeEnvOptionOverrides(
-      google::protobuf::Map<std::string, xla::OptionOverrideProto>*
-          output_env_option_overrides) const;
 
   // Serialize the CompileOptions into a CompileOptionsProto.
   absl::StatusOr<CompileOptionsProto> ToProto() const;

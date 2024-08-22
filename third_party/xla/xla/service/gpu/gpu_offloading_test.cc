@@ -31,15 +31,15 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/stream_attribute_annotator.h"
+#include "xla/service/gpu/transforms/stream_attribute_annotator.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_memory_scheduler.h"
 #include "xla/service/hlo_rematerialization.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/util.h"
-#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -247,6 +247,19 @@ TEST_F(GpuOffloadingTest, CopyIRCreationTest) {
   EXPECT_TRUE(RunAndCompareTwoModules(std::move(module), std::move(module_ref),
                                       ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6},
                                       /*run_hlo_passes=*/false));
+}
+
+// The memory management operations (allocation and deallocation) for the host
+// in unit test below mirror those employed for host offloading in this file.
+TEST_F(GpuOffloadingTest, XLAHostMemoryAllocationDeallocationTest) {
+  stream_executor::StreamExecutor* executor =
+      backend().default_stream_executor();
+  stream_executor::DeviceMemoryBase host_ptr =
+      executor->Allocate(64, (int64_t)(stream_executor::MemoryType::kHost));
+  TF_ASSERT_OK_AND_ASSIGN(auto memory_space,
+                          executor->GetPointerMemorySpace(host_ptr.opaque()));
+  EXPECT_EQ(memory_space, stream_executor::MemoryType::kHost);
+  executor->Deallocate(&host_ptr);
 }
 
 }  // namespace

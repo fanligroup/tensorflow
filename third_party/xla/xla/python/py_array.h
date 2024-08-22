@@ -27,10 +27,12 @@ limitations under the License.
 #include <vector>
 
 // placeholder for index annotation headers
+#include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
-#include "third_party/nanobind/include/nanobind/nanobind.h"
+#include "nanobind/nanobind.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_future.h"
@@ -44,7 +46,6 @@ limitations under the License.
 #include "xla/python/py_client.h"
 #include "xla/python/traceback.h"
 #include "xla/shape.h"
-#include "xla/statusor.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
 
@@ -152,6 +153,10 @@ class PyArray : public nanobind::object {
       bool weak_type, bool committed, bool skip_checks);
 
   static absl::Status RegisterTypes(nanobind::module_& m);
+
+  static PyArray borrow(PyObject* ptr) {
+    return nanobind::borrow<xla::PyArray>(ptr);
+  }
 
   using Storage = PyArray_Storage;
 
@@ -273,8 +278,10 @@ class PyArray : public nanobind::object {
 
   PyArray Clone() const;
 
-  absl::StatusOr<PyArray> CopyToDeviceWithSharding(
-      ifrt::DeviceList devices, nanobind::object dst_sharding);
+  static absl::StatusOr<std::vector<PyArray>> BatchedCopyToDeviceWithSharding(
+      absl::Span<const PyArray> py_arrays,
+      absl::Span<const ifrt::DeviceList> dst_device_lists,
+      absl::Span<const nanobind::object> dst_shardings);
 
   static absl::StatusOr<PyArray> BatchedDevicePut(
       nanobind::object aval, nanobind::object sharding,

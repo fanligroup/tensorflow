@@ -126,6 +126,9 @@ filegroup(
     name = "tflite_internal_cc_3p_api_deps_src_all",
     srcs = [
         ":tflite_internal_cc_3p_api_deps_src",
+        "//tensorflow/compiler/mlir/lite:tflite_internal_cc_3p_api_deps_src",
+        "//tensorflow/compiler/mlir/lite/core/api:tflite_internal_cc_3p_api_deps_src",
+        "//tensorflow/compiler/mlir/lite/schema:tflite_internal_cc_3p_api_deps_src",
         "//tensorflow/lite/core:macros.h",
         "//tensorflow/lite/core/acceleration/configuration/c:tflite_internal_cc_3p_api_deps_src",
         "//tensorflow/lite/core/api:tflite_internal_cc_3p_api_deps_src",
@@ -140,7 +143,6 @@ filegroup(
 filegroup(
     name = "tflite_internal_cc_3p_api_deps_src",
     srcs = [
-        ":allocation.cc",
         ":allocation.h",
         ":array.cc",
         ":array.h",
@@ -149,7 +151,6 @@ filegroup(
         ":minimal_logging.cc",
         ":minimal_logging.h",
         ":minimal_logging_android.cc",
-        ":mmap_allocation.cc",
         ":mutable_op_resolver.cc",
         ":mutable_op_resolver.h",
         ":op_resolver.h",
@@ -412,11 +413,12 @@ cc_library(
 #         "//base:addressmap",
 #         "//base:low_level_alloc",
 #         "//base:malloc_hook",
-#         "//tensorflow/core/profiler/lib:traceme",
 #         "//tensorflow/lite/core/c:common",
 #         "//tensorflow/lite/kernels:kernel_util",
 #         "@local_tsl//tsl/profiler/backends/cpu:traceme_recorder",
 #         "@local_tsl//tsl/profiler/lib:scoped_memory_debug_annotation",
+#         "@local_tsl//tsl/profiler/lib:traceme",
+#         "@local_tsl//tsl/profiler/lib:traceme_encode",
 #         "@com_google_absl//absl/base",
 #         "@com_google_absl//absl/base:core_headers",
 #         "@com_google_absl//absl/debugging:stacktrace",
@@ -480,22 +482,16 @@ cc_library(
 
 cc_library(
     name = "allocation",
-    srcs = [
-        "allocation.cc",
-    ] + select({
-        ":tflite_mmap_disabled": [
-            "mmap_allocation_disabled.cc",
-        ],
-        "//conditions:default": [
-            "mmap_allocation.cc",
-        ],
-    }),
     hdrs = [
         "allocation.h",
+        "//tensorflow/compiler/mlir/lite:allocation.h",
     ],
     compatible_with = get_compatible_with_portable(),
     copts = tflite_copts_warnings(),
-    deps = ["//tensorflow/lite/core/api:error_reporter"],
+    deps = [
+        "//tensorflow/compiler/mlir/lite:allocation",
+        "//tensorflow/compiler/mlir/lite/core/api:error_reporter",
+    ],
 )
 
 cc_library(
@@ -828,7 +824,6 @@ cc_library(
     deps = [
         ":minimal_logging",
         "//tensorflow/lite/core/api:error_reporter",
-        "//tensorflow/lite/core/c:common",
     ],
 )
 
@@ -893,6 +888,7 @@ cc_library(
     copts = tflite_copts_warnings(),
     deps = [
         ":string",
+        "//tensorflow/compiler/mlir/lite:string_utils",
         "//tensorflow/lite/core/c:c_api_types",
         "//tensorflow/lite/core/c:common",
     ],

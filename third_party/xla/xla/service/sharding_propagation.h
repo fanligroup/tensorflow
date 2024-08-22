@@ -22,13 +22,13 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/custom_call_sharding_helper.h"
 #include "xla/service/dot_as_convolution_util.h"
 #include "xla/service/hlo_pass_interface.h"
-#include "xla/statusor.h"
 
 namespace xla {
 
@@ -140,8 +140,7 @@ class ShardingPropagation : public HloModulePass {
 
  private:
   bool InferShardingFromShardGroup(
-      HloInstruction* instruction, const ComputationMap& computation_map,
-      int64_t aggressiveness,
+      HloInstruction* instruction, int64_t aggressiveness,
       const absl::flat_hash_set<HloInstruction*>& shard_group);
   bool InferShardingFromOperands(
       HloInstruction* instruction, const ComputationMap& computation_map,

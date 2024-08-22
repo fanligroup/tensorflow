@@ -21,6 +21,7 @@ package_group(
         "//learning/brain/tfrt/mlir/mlrt/application/pathways/compiler/...",
         # Allow visibility from the mlir language server.
         "//learning/brain/mlir/mlir_lsp_server/...",
+        "//smartass/brain/util/...",
     ]),
 )
 
@@ -68,6 +69,7 @@ cc_library(
         "lower_to_ifrt_restore_variable.cc",
         "rewrite_cluster_to_ifrt_call.cc",
         "sink_variable_as_named_array.cc",
+        "tf_device_cleanup.cc",
         "tf_identity_propagation.cc",
         "tf_ifrt_passes.cc",
         "tf_restore_merging.cc",
@@ -269,12 +271,12 @@ tf_cc_test(
         "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
-        "@local_tsl//tsl/framework/test_util:mock_serving_device_selector",
         "@local_tsl//tsl/platform:env",
         "@local_tsl//tsl/platform:statusor",
         "@local_xla//xla/python/ifrt",
         "@local_xla//xla/python/ifrt:test_util",
         "@local_xla//xla/python/pjrt_ifrt:tfrt_cpu_client_test_lib",
+        "@local_xla//xla/tsl/framework/test_util:mock_serving_device_selector",
         "@tf_runtime//:hostcontext",
     ],
 )

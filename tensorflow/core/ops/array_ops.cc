@@ -3174,6 +3174,7 @@ REGISTER_OP("ScatterNd")
     .Output("output: T")
     .Attr("T: type")
     .Attr("Tindices: {int16, int32, int64}")
+    .Attr("bad_indices_policy: string = ''")
     .SetShapeFn([](InferenceContext* c) {
       ShapeHandle indices_shape;
       TF_RETURN_IF_ERROR(c->WithRankAtLeast(c->input(0), 1, &indices_shape));
@@ -3192,6 +3193,7 @@ REGISTER_OP("TensorScatterUpdate")
     .Output("output: T")
     .Attr("T: type")
     .Attr("Tindices: {int16, int32, int64, uint16}")
+    .Attr("bad_indices_policy: string = ''")
     .SetShapeFn(ScatterNdTensorShape);
 
 REGISTER_OP("TensorScatterAdd")
@@ -3201,6 +3203,7 @@ REGISTER_OP("TensorScatterAdd")
     .Output("output: T")
     .Attr("T: type")
     .Attr("Tindices: {int32, int64}")
+    .Attr("bad_indices_policy: string = ''")
     .SetShapeFn(ScatterNdTensorShape);
 
 REGISTER_OP("TensorScatterSub")
@@ -3210,6 +3213,7 @@ REGISTER_OP("TensorScatterSub")
     .Output("output: T")
     .Attr("T: type")
     .Attr("Tindices: {int32, int64}")
+    .Attr("bad_indices_policy: string = ''")
     .SetShapeFn(ScatterNdTensorShape);
 
 REGISTER_OP("TensorScatterMin")
@@ -3219,6 +3223,7 @@ REGISTER_OP("TensorScatterMin")
     .Output("output: T")
     .Attr("T: type")
     .Attr("Tindices: {int32, int64}")
+    .Attr("bad_indices_policy: string = ''")
     .SetShapeFn(ScatterNdTensorShape);
 
 REGISTER_OP("TensorScatterMax")
@@ -3228,6 +3233,7 @@ REGISTER_OP("TensorScatterMax")
     .Output("output: T")
     .Attr("T: type")
     .Attr("Tindices: {int32, int64}")
+    .Attr("bad_indices_policy: string = ''")
     .SetShapeFn(ScatterNdTensorShape);
 
 REGISTER_OP("ScatterNdNonAliasingAdd")
@@ -3237,6 +3243,7 @@ REGISTER_OP("ScatterNdNonAliasingAdd")
     .Output("output: T")
     .Attr("T: {numbertype, bool}")
     .Attr("Tindices: {int32, int64}")
+    .Attr("bad_indices_policy: string = ''")
     .SetShapeFn(ScatterNdTensorShape);
 
 REGISTER_OP("FakeQuantWithMinMaxArgs")

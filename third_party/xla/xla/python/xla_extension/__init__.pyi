@@ -73,11 +73,11 @@ class PrimitiveType(enum.IntEnum):
   U16: PrimitiveType
   U32: PrimitiveType
   U64: PrimitiveType
-  F8_E4M3FN: PrimitiveType
-  F8_E4M3B11FNUZ: PrimitiveType
-  F8_E4M3FNUZ: PrimitiveType
-  F8_E5M2: PrimitiveType
-  F8_E5M2FNUZ: PrimitiveType
+  F8E4M3FN: PrimitiveType
+  F8E4M3B11FNUZ: PrimitiveType
+  F8E4M3FNUZ: PrimitiveType
+  F8E5M2: PrimitiveType
+  F8E5M2FNUZ: PrimitiveType
   BF16: PrimitiveType
   F16: PrimitiveType
   F32: PrimitiveType
@@ -91,8 +91,15 @@ class PrimitiveType(enum.IntEnum):
 # === BEGIN xla_compiler.cc
 
 class Layout:
+  @overload
   def __init__(self, minor_to_major: Tuple[int, ...]): ...
+  @overload
+  def __init__(self, minor_to_major: Tuple[int, ...],
+               tiling: Tuple[Tuple[int, ...], ...],
+               element_size_in_bits: int): ...
   def minor_to_major(self) -> Tuple[int, ...]: ...
+  def tiling(self) -> Sequence[Tuple[int, ...]]: ...
+  def element_size_in_bits(self) -> int: ...
   def to_string(self) -> str: ...
   def __eq__(self, other: Layout) -> bool: ...
   def __ne__(self, other: Layout) -> bool: ...
@@ -311,6 +318,9 @@ class DebugOptions:
   xla_gpu_dump_autotune_results_to: str
   xla_gpu_load_autotune_results_from: str
   xla_gpu_dump_autotune_logs_to: str
+  xla_gpu_kernel_cache_file: str
+  xla_gpu_enable_llvm_module_compilation_parallelism: bool
+  xla_gpu_per_fusion_autotune_cache_dir: str
 
 class CompiledMemoryStats:
   generated_code_size_in_bytes: int
@@ -339,6 +349,7 @@ class ExecutableBuildOptions:
   use_auto_spmd_partitioning: bool
   auto_spmd_partitioning_mesh_shape: List[int]
   auto_spmd_partitioning_mesh_ids: List[int]
+  use_shardy_partitioner: bool
 
 class PrecisionConfig_Precision(enum.IntEnum):
   DEFAULT: int
@@ -456,6 +467,7 @@ class PjRtLayout:
   def __hash__(self) -> int: ...
   def __getstate__(self) -> Any: ...
   def __setstate__(self, Any): ...
+  def _xla_layout(self) -> Layout: ...
 
 class GpuAllocatorConfig:
   class Kind(enum.IntEnum):
@@ -622,9 +634,11 @@ ArrayImpl = Any
 #   traceback: Traceback
 #   _HAS_DYNAMIC_ATTRIBUTES: bool = ...
 
-def copy_array_to_devices_with_sharding(
-    self: ArrayImpl, devices: List[Device], sharding: Any
-) -> ArrayImpl: ...
+def batched_copy_array_to_devices_with_sharding(
+    arrays: Sequence[ArrayImpl],
+    devices: Sequence[List[Device]],
+    sharding: Sequence[Any],
+) -> Sequence[ArrayImpl]: ...
 
 def batched_block_until_ready(x: Sequence[ArrayImpl]) -> None: ...
 
@@ -660,7 +674,6 @@ class ExecuteResults:
 
 class LoadedExecutable:
   client: Client
-  def local_logical_device_ids(self) -> List[Tuple[int, int]]: ...
   def local_devices(self) -> List[Device]: ...
   def size_of_generated_code_in_bytes(self) -> int: ...
   def delete(self) -> None: ...
@@ -734,7 +747,6 @@ def cuda_array_interface_to_buffer(
     device_id: int | None = None,
 ) -> ArrayImpl: ...
 
-
 # === BEGIN py_traceback.cc
 
 class Frame:
@@ -742,12 +754,19 @@ class Frame:
   function_name: str
   function_line_start: int
   line_num: int
+  def __init__(self,
+               file_name: str,
+               function_name: str,
+               function_line_start: int,
+               line_num: int): ...
   def __repr__(self) -> str: ...
 
 class Traceback:
   enabled: ClassVar[bool]
   @staticmethod
   def get_traceback() -> Traceback: ...
+  @staticmethod
+  def traceback_from_frames(frames: Sequence[Frame]) -> Any: ...
   frames: Sequence[Frame]
   def __str__(self) -> str: ...
   def as_python_traceback(self) -> Any: ...
@@ -814,7 +833,6 @@ def is_optimized_build() -> bool: ...
 def json_to_pprof_profile(json: str) -> bytes: ...
 def pprof_profile_to_json(proto: bytes) -> str: ...
 
-
 class PmapFunction:
   def __call__(self, *args, **kwargs) -> Any: ...
   def __getstate__(self) -> Any: ...
@@ -849,9 +867,8 @@ class DeviceList:
   def memory_kinds(self) -> Tuple[str, ...]: ...
 
 class Sharding: ...
-class XLACompatibleSharding(Sharding): ...
 
-class NamedSharding(XLACompatibleSharding):
+class NamedSharding(Sharding):
   def __init__(
       self,
       mesh: Any,
@@ -868,13 +885,13 @@ class NamedSharding(XLACompatibleSharding):
   _internal_device_list: DeviceList
   _manual_axes: frozenset[Any]
 
-class SingleDeviceSharding(XLACompatibleSharding):
+class SingleDeviceSharding(Sharding):
   def __init__(self, device: Device, *, memory_kind: Optional[str] = None): ...
   _device: Device
   _memory_kind: Optional[str]
   _internal_device_list: DeviceList
 
-class PmapSharding(XLACompatibleSharding):
+class PmapSharding(Sharding):
   def __init__(
       self, devices: Sequence[Any], sharding_spec: pmap_lib.ShardingSpec
   ): ...
@@ -882,7 +899,7 @@ class PmapSharding(XLACompatibleSharding):
   sharding_spec: pmap_lib.ShardingSpec
   _internal_device_list: DeviceList
 
-class GSPMDSharding(XLACompatibleSharding):
+class GSPMDSharding(Sharding):
   def __init__(
       self,
       devices: Sequence[Device],
@@ -915,7 +932,7 @@ def pjit(
     cache_miss: Callable,
     static_argnums: Sequence[int],
     static_argnames: Sequence[str],
-    donate_argnums: Sequence[int],
+    global_cache_key: Any,
     pytree_registry: pytree.PyTreeRegistry,
     shard_arg_fallback: Callable,
     cache: Optional[PjitFunctionCache] = ...,

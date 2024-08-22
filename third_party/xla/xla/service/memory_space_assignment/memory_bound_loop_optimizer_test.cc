@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_value.h"
 #include "xla/service/memory_space_assignment/allocation.h"
+#include "xla/service/memory_space_assignment/buffer_interval_comparator.h"
 #include "xla/service/memory_space_assignment/cost_analysis.h"
 #include "xla/service/memory_space_assignment/memory_space_assignment.h"
 #include "xla/service/memory_space_assignment/memory_space_assignment.pb.h"
@@ -54,9 +55,9 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/verified_hlo_module.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
@@ -360,7 +361,6 @@ ENTRY Entry {
     options_.is_allowed_in_alternate_mem_fn = is_allowed_in_alternate_mem;
     options_.max_outstanding_prefetches = -1;
     options_.max_outstanding_evictions = -1;
-    options_.allocate_across_sequential_calls = true;
     options_.cost_analysis = cost_analysis_.get();
 
     std::unique_ptr<PresetAssignments> preset_assignments =

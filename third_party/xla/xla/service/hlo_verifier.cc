@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
@@ -114,9 +115,10 @@ absl::Status CheckNestedComputationThreadNameEqual(
     for (const HloComputation* called_cmp : instr->called_computations()) {
       if (called_cmp->execution_thread() != comp->execution_thread()) {
         return Internal(
-            "Nested computations expects same computation's thread name (%s vs "
-            "%s).",
-            called_cmp->execution_thread(), comp->execution_thread());
+            "Nested computations expects same computation's thread name: %s vs "
+            "%s, in called computation `%s` vs caller computation `%s`",
+            called_cmp->execution_thread(), comp->execution_thread(),
+            called_cmp->name(), comp->name());
       }
       TF_RETURN_IF_ERROR(CheckNestedComputationThreadNameEqual(
           called_cmp, skip_nested_async_op_check));
@@ -151,6 +153,15 @@ absl::Status ShapeVerifier::Preprocess(HloInstruction* hlo) {
   if (!opts_.allow_unbounded_dynamism && hlo->shape().is_unbounded_dynamic()) {
     return InvalidArgument("Unbounded dynamism is disabled for instruction: %s",
                            hlo->ToString());
+  }
+  if (hlo->shape().has_layout()) {
+    if (hlo->shape().layout().minor_to_major_size() !=
+        hlo->shape().dimensions_size()) {
+      return InvalidArgument(
+          "Instruction has mismatched minor-to-major size and dimension size: "
+          "%s",
+          hlo->ToString());
+    }
   }
   return absl::OkStatus();
 }
@@ -1282,9 +1293,21 @@ absl::Status ShapeVerifier::HandleFusion(HloInstruction* fusion) {
     const Shape& operand_subshape = ShapeUtil::GetSubshape(
         casted_fusion->operand(pair.second.first)->shape(), pair.second.second);
     if (opts_.layout_sensitive) {
-      TF_RET_CHECK(operand_subshape == output_subshape)
-          << "Different aliasing shapes: " << operand_subshape.ToString()
-          << " vs " << output_subshape.ToString();
+      if (casted_fusion->IsFused()) {
+        // Nested fusions can have aliasing that does not require the
+        // tiling/memory space assignment to be the same in order to alias.
+        TF_RET_CHECK(
+            Shape::Equal().IgnoreTilesInLayout().IgnoreMemorySpaceInLayout()(
+                operand_subshape, output_subshape))
+            << "Different aliasing shapes: "
+            << operand_subshape.ToString(/*print_layout=*/true) << " vs "
+            << output_subshape.ToString(/*print_layout=*/true);
+      } else {
+        TF_RET_CHECK(Shape::Equal()(operand_subshape, output_subshape))
+            << "Different aliasing shapes: "
+            << operand_subshape.ToString(/*print_layout=*/true) << " vs "
+            << output_subshape.ToString(/*print_layout=*/true);
+      }
     } else {
       TF_RET_CHECK(ShapeUtil::Compatible(output_subshape, operand_subshape))
           << "Different aliasing shapes: " << operand_subshape.ToString()
@@ -1300,6 +1323,34 @@ absl::Status ShapeVerifier::HandleCall(HloInstruction* call) {
   for (int64_t i = 0; i < call->to_apply()->num_parameters(); ++i) {
     TF_RETURN_IF_ERROR(CheckOperandAndParameter(call, i, call->to_apply(), i));
   }
+  if (call->is_composite()) {
+    TF_RET_CHECK(call->has_frontend_attributes())
+        << "A composite call op must have frontend attributes";
+    auto map = call->frontend_attributes().map();
+    if (auto name = map.find("composite.name");
+        name == map.end() || name->second.empty()) {
+      return InvalidArgument(
+          "A composite call op must have frontend attributes with key "
+          "composite.name whose value is non-empty");
+    }
+    if (auto attributes = map.find("composite.attributes");
+        attributes != map.end() && attributes->second.empty()) {
+      return InvalidArgument(
+          "A composite call op must have frontend attributes with key "
+          "composite.attributes whose value is default: {} or non-empty");
+    }
+    if (auto version_str = map.find("composite.version");
+        version_str != map.end()) {
+      int64_t version = 0;
+      if (!absl::SimpleAtoi(version_str->second, &version) || version < 0) {
+        return InvalidArgument(
+            "A composite call op must have frontend attributes with a "
+            "composite.version whose value is a non-negative integer but got: "
+            "%s",
+            version_str->second);
+      }
+    }
+  }
   // The shape of kCall should match the shape of the computation it calls.
   return CheckShape(call, call->to_apply()->root_instruction()->shape());
 }
@@ -1308,7 +1359,8 @@ absl::Status ShapeVerifier::HandleCustomCall(HloInstruction* instruction) {
   const HloCustomCallInstruction* custom_call =
       DynCast<const HloCustomCallInstruction>(instruction);
   TF_RET_CHECK(custom_call != nullptr);
-  if (custom_call->layout_constrained()) {
+  if (custom_call->layout_constrained() &&
+      !custom_call->IsCustomCall("LayoutConstraint")) {
     // If the layout is constrained, verify all the respective shapes have
     // layouts and that the constrained operand shapes match the shapes of the
     // operands.
@@ -1562,12 +1614,6 @@ absl::Status ShapeVerifier::CheckAsyncOpComputationShapes(
         HloOpcodeString(async_op->opcode()), async_shape.ToString());
   }
 
-  // The semantics of an async custom call are defined by the custom call
-  // implementation, so we stop checking here.
-  if (async_op->async_wrapped_opcode() == HloOpcode::kCustomCall) {
-    return absl::OkStatus();
-  }
-
   ProgramShape computation_shape =
       async_op->async_wrapped_computation()->ComputeProgramShape();
   Shape param_shape = ShapeUtil::MakeTupleShape(computation_shape.parameters());
@@ -1651,7 +1697,9 @@ absl::Status ShapeVerifier::HandleCopyDone(HloInstruction* copy_done) {
   const Shape& dest_shape = ShapeUtil::GetTupleElementShape(operand_shape, 0);
   const Shape& src_shape = ShapeUtil::GetTupleElementShape(operand_shape, 1);
   if (!ShapesSame(dest_shape, src_shape,
-                  Shape::Equal().IgnoreMemorySpaceInLayout())) {
+                  Shape::Equal()
+                      .IgnoreMemorySpaceInLayout()
+                      .IgnoreSplitConfigInLayout())) {
     return Internal(
         "Source and destination buffers in CopyDone arguments need to be the "
         "same shape found %s and %s\n%s",
@@ -1895,10 +1943,31 @@ absl::Status ShapeVerifier::CheckShape(
           // For DynamicUpdateSlice it has an "in-place" update semantics, but
           // inside of fusions memory space propagation doesn't propagate the
           // memory spaces all the way, causing possible mismatches. Relax the
-          // constraint in that condition.
-          equal.IgnoreMemorySpaceInLayout();
+          // constraint in that condition. Tiling also is not necessarily
+          // meaningful within fusions, so we can relax this as well.
+          equal.IgnoreMemorySpaceInLayout().IgnoreTilesInLayout();
         }
         return ShapesSame(instruction->shape(), inferred_shape, equal);
+      }
+      case HloOpcode::kCopy: {
+        // Disallow host offloading copies which change FpPrecision.
+        if (opts_.IsLayoutSensitive()) {
+          if (instruction->shape().has_layout() &&
+              inferred_shape.has_layout()) {
+            int64_t instruction_memory_space =
+                instruction->shape().layout().memory_space();
+            int64_t operand_memory_space =
+                inferred_shape.layout().memory_space();
+            if (instruction_memory_space != operand_memory_space &&
+                (instruction_memory_space == Layout::kHostMemorySpace ||
+                 operand_memory_space == Layout::kHostMemorySpace)) {
+              // Is a host->device copy for a device->host copy.
+              return Shape::Equal().IgnoreMemorySpaceInLayout()(
+                  instruction->shape(), inferred_shape);
+            }
+          }
+        }
+        [[fallthrough]];
       }
 
       // We allow arbitrary layout and f32->bf16 transformations on all other
@@ -2055,6 +2124,30 @@ std::string ComputationsToString(
                        [](std::string* s, const HloComputation* computation) {
                          absl::StrAppend(s, computation->name());
                        });
+}
+
+absl::Status VerifyInstructionNameUnchanged(const HloModule& module,
+                                            const HloVerifierOpts& opts) {
+  if (!opts.verify_instruction_name_unchanged) {
+    return absl::OkStatus();
+  }
+  for (auto* comp : module.computations()) {
+    for (auto* inst : comp->instructions()) {
+      if (inst->metadata().scheduling_name().empty()) {
+        continue;
+      }
+      // We do not enforce the invariant when the instruction has been cloned
+      // explicitly via .clone or .remat suffix.
+      if (inst->metadata().scheduling_name() != inst->name() &&
+          (!absl::StrContains(inst->name(), ".remat") &&
+           !absl::StrContains(inst->name(), ".clone"))) {
+        return absl::FailedPreconditionError(absl::StrCat(
+            "Expected instruction name to remain the same. Was '",
+            inst->metadata().scheduling_name(), "' is '", inst->name(), "'."));
+      }
+    }
+  }
+  return absl::OkStatus();
 }
 
 // Verifies various invariants about the structure of the HLO:
@@ -2863,6 +2956,15 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
       }
     }
 
+    if (instruction->has_to_apply() &&
+        instruction->to_apply()->execution_thread() !=
+            instruction->parent()->execution_thread()) {
+      return Internal(
+          "%s top_apply computation execution thread does not match (%s vs %s)",
+          instruction->name(), instruction->to_apply()->execution_thread(),
+          instruction->parent()->execution_thread());
+    }
+
     return absl::OkStatus();
   }
 
@@ -2981,6 +3083,8 @@ absl::StatusOr<bool> HloVerifier::Run(
     TF_RETURN_IF_ERROR(VerifyHloStructure(module));
     TF_RETURN_IF_ERROR(VerifyAsynchronousInstructionPairs(*module));
     TF_RETURN_IF_ERROR(VerifyChannels(*module));
+    TF_RETURN_IF_ERROR(VerifyInstructionNameUnchanged(
+        *module, target_metadata_->GetVerifierOpts()));
 
     std::unique_ptr<ShapeVerifier> shape_verifier =
         target_metadata_->GetVerifier();

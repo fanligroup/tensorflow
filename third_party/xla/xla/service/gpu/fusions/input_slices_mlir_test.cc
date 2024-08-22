@@ -14,9 +14,11 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/service/gpu/fusions/input_slices_mlir.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "xla/error_spec.h"
 #include "xla/service/gpu/fusions/mlir_emitter_test_base.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/model/indexing_test_utils.h"
 
 namespace xla {
@@ -43,7 +45,7 @@ TEST_F(MlirInputSlicesFusionTest, ThreadIndexing) {
                     .value();
 
   auto* root = module->entry_computation()->root_instruction();
-  auto analysis = AnalyzeFusion(*root, device_info_);
+  auto analysis = HloFusionAnalysis::Create(*root, device_info_);
 
   auto emitter = GetEmitter(analysis);
 
@@ -122,6 +124,25 @@ TEST_F(MlirInputSlicesFusionTest, SliceOfPad) {
     ENTRY entry {
       input = f32[6] parameter(0)
       ROOT fusion = (f32[11], f32[11]) fusion(input), kind=kLoop, calls=fusion
+    })";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
+}
+
+TEST_F(MlirInputSlicesFusionTest, ZeroSlice) {
+  auto kHloString = R"(
+    fusion {
+      %p0 = s32[0] parameter(0)
+      %p1 = s32[2] parameter(1)
+      %concatenate = s32[2] concatenate(p0, p1), dimensions={0}
+      %slice = s32[0] slice(%concatenate), slice={[0:0]}
+      %slice.1 = s32[2] slice(%concatenate), slice={[0:2]}
+      ROOT %tuple = (s32[0], s32[2]) tuple(%slice, %slice.1)
+    }
+
+    ENTRY entry {
+      %p0 = s32[0] parameter(0)
+      %p1 = s32[2] parameter(1)
+      ROOT fusion = (s32[0], s32[2]) fusion(%p0, %p1), kind=kLoop, calls=fusion
     })";
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }

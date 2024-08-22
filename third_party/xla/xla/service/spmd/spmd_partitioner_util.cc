@@ -1522,6 +1522,13 @@ std::optional<HloInstruction*> ExchangeHaloAndGetValidData(
             ? b->AddInstruction(HloInstruction::CreateBinary(
                   mask_shape, HloOpcode::kAnd, predicates[0], predicates[1]))
             : predicates[0];
+    if (pad_value->shape().element_type() !=
+        valid_slice->shape().element_type()) {
+      pad_value = b->AddInstruction(HloInstruction::CreateConvert(
+          ShapeUtil::MakeShape(valid_slice->shape().element_type(),
+                               pad_value->shape().dimensions()),
+          pad_value));
+    }
     auto masking_value = b->AddInstruction(
         HloInstruction::CreateBroadcast(valid_slice->shape(), pad_value, {}));
     valid_slice = b->AddInstruction(
@@ -1741,7 +1748,8 @@ int64_t ShardCountAtDim(const HloSharding& sharding, int64_t dim) {
     return 1;
   }
   if (dim == -1) {
-    // -1 is used as a placeholder in non-existing dims like DotConvDimsMapping.
+    // -1 is used as a placeholder in non-existing dims like
+    // DotConvolutionDimsInfo.
     return 1;
   }
   return sharding.tile_assignment().dim(dim);

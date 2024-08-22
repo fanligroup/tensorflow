@@ -30,7 +30,7 @@ limitations under the License.
 #include "xla/stream_executor/executor_cache.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/stream_executor/stream_executor_interface.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/stream_executor/tpu/tpu_executor_c_api.h"  // IWYU pragma: keep
 #include "xla/stream_executor/tpu/tpu_platform_interface.h"
@@ -70,8 +70,7 @@ class TpuPlatform : public ::tensorflow::tpu::TpuPlatformInterface {
 
   bool Initialized() const override;
 
-  absl::Status Initialize(
-      const std::map<std::string, std::string>& platform_options) override;
+  absl::Status Initialize() override;
 
   absl::Status Reset(bool only_tear_down, absl::string_view reason) override {
     LOG(FATAL) << "Not yet implemented";
@@ -83,18 +82,12 @@ class TpuPlatform : public ::tensorflow::tpu::TpuPlatformInterface {
   }
 
   absl::StatusOr<::stream_executor::StreamExecutor*> ExecutorForDevice(
+      int ordinal) override;
+
+  absl::StatusOr<::stream_executor::StreamExecutor*> FindExisting(
       int ordinal) override {
-    stream_executor::StreamExecutorConfig config;
-    config.ordinal = ordinal;
-    return GetExecutor(config);
+    return executor_cache_.Get(ordinal);
   }
-
-  absl::StatusOr<::stream_executor::StreamExecutor*> GetExecutor(
-      const ::stream_executor::StreamExecutorConfig& config) override;
-
-  absl::StatusOr<std::unique_ptr<::stream_executor::StreamExecutor>>
-  GetUncachedExecutor(
-      const ::stream_executor::StreamExecutorConfig& config) override;
 
   StreamMap* stream_map() { return &stream_map_; }
 
@@ -119,6 +112,12 @@ class TpuPlatform : public ::tensorflow::tpu::TpuPlatformInterface {
   absl::Mutex& mutex() { return event_map_mu_; }
 
  private:
+  // Returns a device constructed with the ordinal without
+  // looking in or storing to the Platform's executor cache.
+  // Ownership IS transferred to the caller.
+  absl::StatusOr<std::unique_ptr<::stream_executor::StreamExecutor>>
+  GetUncachedExecutor(int ordinal);
+
   mutable SE_Platform* platform_;
   std::string name_;
   stream_executor::ExecutorCache executor_cache_;

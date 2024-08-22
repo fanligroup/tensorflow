@@ -81,14 +81,23 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "stablehlo/dialect/StablehloOps.h"  // from @stablehlo
 #include "stablehlo/dialect/VhloOps.h"  // from @stablehlo
+#include "tensorflow/compiler/mlir/lite/core/c/builtin_op_data.h"
+#include "tensorflow/compiler/mlir/lite/core/macros.h"
+#include "tensorflow/compiler/mlir/lite/delegates/flex/allowlisted_flex_ops.h"
+#include "tensorflow/compiler/mlir/lite/experimental/remat/metadata_util.h"
 #include "tensorflow/compiler/mlir/lite/flatbuffer_operator.h"
 #include "tensorflow/compiler/mlir/lite/ir/tfl_ops.h"
+#include "tensorflow/compiler/mlir/lite/metrics/converter_error_data.pb.h"
 #include "tensorflow/compiler/mlir/lite/metrics/error_collector_inst.h"
 #include "tensorflow/compiler/mlir/lite/quantization/ir/QuantOps.h"
 #include "tensorflow/compiler/mlir/lite/schema/mutable/schema_generated.h"
+#include "tensorflow/compiler/mlir/lite/schema/schema_conversion_utils.h"
+#include "tensorflow/compiler/mlir/lite/utils/control_edges.h"
 #include "tensorflow/compiler/mlir/lite/utils/convert_type.h"
 #include "tensorflow/compiler/mlir/lite/utils/low_bit_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/stateful_ops_utils.h"
+#include "tensorflow/compiler/mlir/lite/utils/string_utils.h"
+#include "tensorflow/compiler/mlir/lite/version.h"
 #include "tensorflow/compiler/mlir/op_or_arg_name_mapper.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_dialect.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_executor.h"
@@ -104,20 +113,10 @@ limitations under the License.
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/platform/tstring.h"
-#include "tensorflow/lite/core/c/builtin_op_data.h"
-#include "tensorflow/lite/core/interpreter.h"
-#include "tensorflow/lite/core/macros.h"
-#include "tensorflow/lite/delegates/flex/allowlisted_flex_ops.h"
-#include "tensorflow/lite/experimental/remat/metadata_util.h"
-#include "tensorflow/lite/graph_info.h"
-#include "tensorflow/lite/python/metrics/converter_error_data.pb.h"
-#include "tensorflow/lite/schema/schema_conversion_utils.h"
-#include "tensorflow/lite/string_util.h"
 #include "tensorflow/lite/toco/toco_flags.pb.h"
 #include "tensorflow/lite/tools/versioning/gpu_compatibility.h"
 #include "tensorflow/lite/tools/versioning/op_version.h"
 #include "tensorflow/lite/tools/versioning/runtime_version.h"
-#include "tensorflow/lite/version.h"
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/tstring.h"
@@ -158,6 +157,11 @@ using CustomOptionsOffset = VectorBufferOffset<uint8_t>;
 namespace tfl = mlir::TFL;
 
 ABSL_CONST_INIT const absl::string_view kFlexOpNamePrefix = "Flex";
+
+// LINT.IfChange(optional_tensor)
+// Taken from third_party/tensorflow/lite/core/c/common.h
+constexpr int kTfLiteMigrationOptionalTensor = -1;
+// LINT.ThenChange(//tensorflow/lite/core/c/common.h:optional_tensor)
 
 // Use initial buffer size in flatbuffer builder to be same as the initial size
 // used by the TOCO export. (It does not explain rationale for this choice.)
@@ -631,6 +635,11 @@ class Translator {
       mlir::TFL::WhileOp op, const std::vector<int32_t>& operands,
       const std::vector<int32_t>& results);
 
+  // Build while operator where then & else are regions.
+  std::optional<BufferOffset<tflite::Operator>> BuildIfOperator(
+      mlir::TFL::IfOp op, const std::vector<int32_t>& operands,
+      const std::vector<int32_t>& results);
+
   // Build call once operator.
   BufferOffset<tflite::Operator> BuildCallOnceOperator(
       mlir::TFL::CallOnceOp op, const std::vector<int32_t>& operands,
@@ -994,11 +1003,16 @@ std::optional<BufferOffset<tflite::Buffer>> Translator::BuildBuffer(
   // TensorFlow and TensorFlow Lite use different string encoding formats.
   // Convert to TensorFlow Lite format is it's a constant string tensor.
   if (tensor.dtype() == tensorflow::DT_STRING) {
-    ::tflite::DynamicBuffer dynamic_buffer;
+    ::mlir::TFL::SimpleDynamicBuffer dynamic_buffer;
     auto flat = tensor.flat<::tensorflow::tstring>();
     for (int i = 0; i < flat.size(); ++i) {
       const auto& str = flat(i);
-      dynamic_buffer.AddString(str.c_str(), str.length());
+      if (!dynamic_buffer.AddString(str.c_str(), str.length())) {
+        inst->emitError(
+            Twine("failed to add string to dynamic buffer with error: " +
+                  status.ToString()));
+        return std::nullopt;
+      }
     }
     char* tensor_buffer;
     int bytes = dynamic_buffer.WriteToBuffer(&tensor_buffer);
@@ -1326,6 +1340,54 @@ std::optional<BufferOffset<tflite::Operator>> Translator::BuildWhileOperator(
                                 builtin_options);
 }
 
+std::optional<BufferOffset<tflite::Operator>> Translator::BuildIfOperator(
+    mlir::TFL::IfOp op, const std::vector<int32_t>& operands,
+    const std::vector<int32_t>& results) {
+  auto opcode_index = GetOpcodeIndex("if", tflite::BuiltinOperator_IF);
+  auto get_call_op = [&](mlir::Block& b) -> std::optional<mlir::func::CallOp> {
+    if (b.getOperations().size() != 2) return std::nullopt;
+    if (auto call_op = dyn_cast<mlir::func::CallOp>(b.front())) return call_op;
+    return std::nullopt;
+  };
+  auto then_call_op = get_call_op(op.getThenRegion().front());
+  auto else_call_op = get_call_op(op.getElseRegion().front());
+  if (!then_call_op || !else_call_op)
+    return op.emitOpError("only single call then/else while export supported"),
+           std::nullopt;
+  auto then_subgraph_index =
+      subgraph_index_map_.at(then_call_op.value().getCallee().str());
+  auto else_subgraph_index =
+      subgraph_index_map_.at(else_call_op.value().getCallee().str());
+  auto builtin_options = tflite::CreateIfOptions(builder_, then_subgraph_index,
+                                                 else_subgraph_index)
+                             .Union();
+
+  // Get the subgraph index of IF op.
+  auto subgraph_func = op->getParentOfType<mlir::func::FuncOp>();
+  auto subgraph_idx = subgraph_index_map_[subgraph_func.getSymName().str()];
+  auto new_operands = operands;
+
+  // Then/Else region shares the same operands, only adding once as the new
+  // operands for the IF op.
+  if (then_call_op.value().getOperands() !=
+      else_call_op.value().getOperands()) {
+    return op.emitOpError("Then/Else region does not contain same operands."),
+           std::nullopt;
+  }
+
+  for (auto call_arg : then_call_op.value().getOperands()) {
+    auto name_of_call_arg = name_mapper_.GetUniqueName(call_arg);
+    const auto call_arg_tensor_id =
+        tensor_index_map_[subgraph_idx][name_of_call_arg];
+    new_operands.push_back(call_arg_tensor_id);
+  }
+  auto inputs = builder_.CreateVector(new_operands);
+  auto outputs = builder_.CreateVector(results);
+  return tflite::CreateOperator(builder_, opcode_index, inputs, outputs,
+                                tflite::BuiltinOptions_IfOptions,
+                                builtin_options);
+}
+
 BufferOffset<tflite::Operator> Translator::BuildNumericVerifyOperator(
     mlir::TFL::NumericVerifyOp op, const std::vector<int32_t>& operands,
     const std::vector<int32_t>& results) {
@@ -1512,7 +1574,7 @@ void CreateFlexbufferVector(
     const std::unique_ptr<flexbuffers::Builder>& flex_builder,
     std::string& name, const mlir::Attribute& attr) {
   auto start = flex_builder->StartVector(name.c_str());
-  auto array = attr.cast<mlir::ArrayAttr>().getValue();
+  auto array = attr.cast<mlir::vhlo::ArrayV1Attr>().getValue();
 
   for (int i = 0; i < array.size(); i++) {
     if (llvm::isa<mlir::BoolAttr>(array[i])) {
@@ -1666,6 +1728,11 @@ Translator::BuildVhloCompositeV1Op(mlir::vhlo::CompositeOpV1 composite_op,
       flex_builder->Float(
           name.c_str(),
           attr.cast<mlir::vhlo::FloatV1Attr>().getValue().convertToFloat());
+    else if (llvm::isa<mlir::vhlo::ArrayV1Attr>(attr))
+      CreateFlexbufferVector(flex_builder, name, attr);
+    else
+      // Unhandled attribute type.
+      return std::nullopt;
   }
 
   flex_builder->EndMap(map_start);
@@ -2088,6 +2155,9 @@ std::optional<BufferOffset<tflite::Operator>> Translator::BuildOperator(
         }
         return BuildWhileOperator(whileOp, operands, results);
       }
+      if (auto ifOp = dyn_cast<mlir::TFL::IfOp>(inst)) {
+        return BuildIfOperator(ifOp, operands, results);
+      }
 
       inst->emitOpError("is not a supported TFLite op");
       return std::nullopt;
@@ -2156,8 +2226,12 @@ std::optional<BufferOffset<tflite::Operator>> Translator::BuildOperator(
       return BuildVhloPadV1Op(vhlo_op, operands, results, vhlo_type_converter);
     }
     if (auto vhlo_op = llvm::dyn_cast<mlir::vhlo::CompositeOpV1>(inst)) {
-      return BuildVhloCompositeV1Op(vhlo_op, operands, results,
-                                    inst->getName().getStringRef().str());
+      auto op = BuildVhloCompositeV1Op(vhlo_op, operands, results,
+                                       inst->getName().getStringRef().str());
+      if (!op)
+        return inst->emitOpError("Failed to build VhloCompositeOpV1."),
+               std::nullopt;
+      return op;
     }
     // for ops don't have kernels, only serialize when conversion is set to
     // true
@@ -3010,7 +3084,7 @@ std::optional<BufferOffset<tflite::SubGraph>> Translator::BuildSubGraph(
     operands.reserve(real_inst->getNumOperands());
     for (auto operand : real_inst->getOperands()) {
       if (mlir::isa<NoneType>(operand.getType()))
-        operands.push_back(kTfLiteOptionalTensor);
+        operands.push_back(kTfLiteMigrationOptionalTensor);
       else if (auto stats_op =
                    llvm::dyn_cast_or_null<mlir::quantfork::StatisticsOp>(
                        operand.getDefiningOp()))

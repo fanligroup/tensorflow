@@ -3,8 +3,10 @@ load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@local_tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "@local_xla//xla/tsl:tsl.bzl",
+    "if_hermetic_cuda_tools",
     "if_not_fuchsia",
     "if_not_windows",
+    "if_oss",
     "internal_visibility",
     "tsl_copts",
 )
@@ -58,6 +60,9 @@ cc_library(
     srcs = ["cuda_libdevice_path.cc"],
     hdrs = ["//tsl/platform:cuda_libdevice_path.h"],
     compatible_with = [],
+    data = if_hermetic_cuda_tools([
+        "@cuda_nvcc//:nvvm",
+    ]),
     tags = [
         "manual",
         "no_oss",
@@ -65,6 +70,7 @@ cc_library(
     ],
     deps = [
         "//tsl/platform",
+        "//tsl/platform:env",
         "//tsl/platform:logging",
         "//tsl/platform:path",
         "//tsl/platform:types",
@@ -95,10 +101,9 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
-        "@local_config_nccl//:nccl_config",
         "@local_config_rocm//rocm:rocm_headers",
         "@local_config_tensorrt//:tensorrt_headers",
-    ],
+    ] + if_oss(["@local_config_nccl//:nccl_config"]),
 )
 
 cc_library(
@@ -274,6 +279,7 @@ cc_library(
         "//tsl/platform:mutex",
         "//tsl/platform:types",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -302,7 +308,6 @@ cc_library(
         "//tsl/platform",
         "//tsl/platform:macros",
         "//tsl/platform:thread_annotations",
-        "//tsl/platform:types",
         "@nsync//:nsync_cpp",
     ],
 )
@@ -550,6 +555,12 @@ cc_library(
 bzl_library(
     name = "cuda_build_defs_bzl",
     srcs = ["cuda_build_defs.bzl"],
+    # copybara:uncomment_begin
+    # test_tags = [
+    # "manual",
+    # "notap",
+    # ],
+    # copybara:uncomment_end
     visibility = internal_visibility(["//tensorflow:__subpackages__"]),
 )
 

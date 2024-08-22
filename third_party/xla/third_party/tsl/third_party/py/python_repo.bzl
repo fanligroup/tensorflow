@@ -2,7 +2,6 @@
 Repository rule to manage hermetic Python interpreter under Bazel.
 
 Version can be set via build parameter "--repo_env=HERMETIC_PYTHON_VERSION=3.11"
-Defaults to 3.11.
 
 To set wheel name, add "--repo_env=WHEEL_NAME=tensorflow_cpu"
 """
@@ -45,9 +44,10 @@ Please check python_init_repositories() in your WORKSPACE file.
         )
         requirements_content = [ctx.read(requirements)] + local_wheel_requirements
         merged_requirements_content = "\n".join(requirements_content)
-        requirements_with_local_wheels = requirements_with_local_wheels.replace(
-            "@" + requirements.repo_name,
-            "@" + ctx.name,
+
+        requirements_with_local_wheels = "@{repo}//:{label}".format(
+            repo = ctx.name,
+            label = requirements.name,
         )
 
         ctx.file(
@@ -122,6 +122,7 @@ def _get_injected_local_wheels(
         local_wheels_dir):
     local_wheel_requirements = []
     py_ver_marker = "-cp%s-" % py_version.replace(".", "")
+    py_major_ver_marker = "-py%s-" % py_version.split(".")[0]
     wheels = {}
 
     if local_wheel_workspaces:
@@ -131,12 +132,26 @@ def _get_injected_local_wheels(
             dist_folder_path = local_wheel_workspace_path.dirname.get_child(dist_folder)
             if dist_folder_path.exists:
                 dist_wheels = dist_folder_path.readdir()
-                _process_dist_wheels(dist_wheels, wheels, py_ver_marker)
+                _process_dist_wheels(
+                    dist_wheels,
+                    wheels,
+                    py_ver_marker,
+                    py_major_ver_marker,
+                    ctx.attr.local_wheel_inclusion_list,
+                    ctx.attr.local_wheel_exclusion_list,
+                )
     if local_wheels_dir:
         dist_folder_path = ctx.path(local_wheels_dir)
         if dist_folder_path.exists:
             dist_wheels = dist_folder_path.readdir()
-            _process_dist_wheels(dist_wheels, wheels, py_ver_marker)
+            _process_dist_wheels(
+                dist_wheels,
+                wheels,
+                py_ver_marker,
+                py_major_ver_marker,
+                ctx.attr.local_wheel_inclusion_list,
+                ctx.attr.local_wheel_exclusion_list,
+            )
 
     for wheel_name, wheel_path in wheels.items():
         local_wheel_requirements.append(
@@ -171,6 +186,14 @@ python_repository = repository_rule(
             mandatory = False,
             default = DEFAULT_VERSION,
         ),
+        "local_wheel_inclusion_list": attr.string_list(
+            mandatory = False,
+            default = ["*"],
+        ),
+        "local_wheel_exclusion_list": attr.string_list(
+            mandatory = False,
+            default = [],
+        ),
     },
     environ = [
         "TF_PYTHON_VERSION",
@@ -178,12 +201,23 @@ python_repository = repository_rule(
         "WHEEL_NAME",
         "WHEEL_COLLAB",
     ],
+    local = True,
 )
 
-def _process_dist_wheels(dist_wheels, wheels, py_ver_marker):
+def _process_dist_wheels(
+        dist_wheels,
+        wheels,
+        py_ver_marker,
+        py_major_ver_marker,
+        local_wheel_inclusion_list,
+        local_wheel_exclusion_list):
     for wheel in dist_wheels:
         bn = wheel.basename
-        if not bn.endswith(".whl") or bn.find(py_ver_marker) < 0:
+        if not bn.endswith(".whl") or (bn.find(py_ver_marker) < 0 and bn.find(py_major_ver_marker) < 0):
+            continue
+        if not _basic_wildcard_match(bn, local_wheel_inclusion_list, True, False):
+            continue
+        if not _basic_wildcard_match(bn, local_wheel_exclusion_list, False, True):
             continue
 
         name_components = bn.split("-")
@@ -198,10 +232,35 @@ def _process_dist_wheels(dist_wheels, wheels, py_ver_marker):
         if not latest_wheel or latest_wheel.basename < wheel.basename:
             wheels[package_name] = wheel
 
+def _basic_wildcard_match(name, patterns, expected_match_result, match_all):
+    match = False
+    for pattern in patterns:
+        match = False
+        if pattern.startswith("*") and pattern.endswith("*"):
+            match = name.find(pattern[1:-1]) >= 0
+        elif pattern.startswith("*"):
+            match = name.endswith(pattern[1:])
+        elif pattern.endswith("*"):
+            match = name.startswith(pattern[:-1])
+        else:
+            match = name == pattern
+
+        if match_all:
+            if match != expected_match_result:
+                return False
+        elif match == expected_match_result:
+            return True
+
+    return match == expected_match_result
+
 def _custom_python_interpreter_impl(ctx):
     version = ctx.attr.version
-    strip_prefix = ctx.attr.strip_prefix.format(version = version)
-    urls = [url.format(version = version) for url in ctx.attr.urls]
+    version_variant = ctx.attr.version_variant
+    strip_prefix = ctx.attr.strip_prefix.format(
+        version = version,
+        version_variant = version_variant,
+    )
+    urls = [url.format(version = version, version_variant = version_variant) for url in ctx.attr.urls]
     binary_name = ctx.attr.binary_name
     if not binary_name:
         ver_chunks = version.split(".")
@@ -217,13 +276,12 @@ def _custom_python_interpreter_impl(ctx):
         output = srcs_dir,
     )
 
-    configure_params = []
+    configure_params = list(ctx.attr.configure_params)
     if "CC" in ctx.os.environ:
         configure_params.append("CC={}".format(ctx.os.environ["CC"]))
     if "CXX" in ctx.os.environ:
         configure_params.append("CXX={}".format(ctx.os.environ["CXX"]))
 
-    configure_params.append("--enable-optimizations")
     configure_params.append("--prefix=%s" % install_path.realpath)
     _exec_and_check(
         ctx,
@@ -306,6 +364,11 @@ custom_python_interpreter = repository_rule(
         "strip_prefix": attr.string(),
         "binary_name": attr.string(mandatory = False),
         "version": attr.string(),
+        "version_variant": attr.string(),
+        "configure_params": attr.string_list(
+            mandatory = False,
+            default = ["--enable-optimizations"],
+        ),
     },
 )
 

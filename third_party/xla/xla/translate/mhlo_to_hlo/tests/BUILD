@@ -12,9 +12,11 @@ lit_test_suite(
         [
             "add.mlir",
             "case.mlir",
+            "composite.mlir",
             "dynamic.mlir",
             "export-with-layouts.mlir",
             "export.mlir",
+            "export_async.mlir",
             "export_and_check_layouts.mlir",
             "export_large_constants.mlir",
             "export_replicas.mlir",
@@ -27,6 +29,7 @@ lit_test_suite(
             "location_to_op_metadata.mlir",
             "location_to_stacktrace.mlir",
             "missing_main.mlir",
+            "module_config.mlir",
             "module_attributes.mlir",
             "multiple_return_tuple.mlir",
             "opaque_elements_attr.mlir",
@@ -35,6 +38,7 @@ lit_test_suite(
             "simple.mlir",
             "unsupported_type.mlir",
             "while.mlir",
+            "while_free_vars.mlir",
         ],
         include = [
             "*.mlir",

@@ -24,21 +24,22 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/Tensor/IR/Tensor.h"  // from @llvm-project
-#include "mlir/IR/AffineExpr.h"  // from @llvm-project
-#include "mlir/IR/AffineMap.h"  // from @llvm-project
-#include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/Value.h"  // from @llvm-project
-#include "mlir/IR/ValueRange.h"  // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/AffineMap.h"
+#include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/Value.h"
+#include "mlir/IR/ValueRange.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/service/gpu/fusions/ir/xla_gpu_ops.h"
 #include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
 #include "xla/service/gpu/fusions/mlir/elemental_hlo_to_mlir.h"
-#include "xla/service/gpu/fusions/mlir/ir/xla_gpu_ops.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
+#include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/model/indexing_analysis.h"
 #include "xla/service/gpu/model/indexing_map.h"
@@ -125,9 +126,9 @@ absl::Status MlirLoopFusion::EmitEntryFunction(
 
   auto body_builder = [&](ValueRange output_tensors, ValueRange dim_values,
                           ValueRange symbol_values) -> SmallVector<Value> {
-    llvm::SmallVector<Value> first_output_indices;
-    builder.createOrFold<ApplyIndexingOp>(first_output_indices, dim_values,
-                                          symbol_values, *indexing);
+    llvm::SmallVector<Value> first_output_indices =
+        mlir_converter::ApplyIndexing(*indexing, dim_values, symbol_values,
+                                      builder);
     auto root_fn = call_targets(
         fusion.fused_instructions_computation()->root_instruction());
 
@@ -143,11 +144,10 @@ absl::Status MlirLoopFusion::EmitEntryFunction(
     result_tensors.reserve(output_tensor_args.size());
     for (auto [root_shape, tensor, value] :
          llvm::zip(result_shapes, output_tensors, result_scalars)) {
-      llvm::SmallVector<Value> output_indices;
-      builder.createOrFold<ApplyIndexingOp>(
-          output_indices, first_output_indices, ValueRange{},
+      llvm::SmallVector<Value> output_indices = mlir_converter::ApplyIndexing(
           GetBitcastMap(*result_shapes.front(), *root_shape,
-                        builder.getContext()));
+                        builder.getContext()),
+          first_output_indices, {}, builder);
       result_tensors.push_back(builder.create<mlir::tensor::InsertOp>(
           value, tensor, output_indices));
     }

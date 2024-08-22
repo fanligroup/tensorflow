@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/literal.h"
@@ -30,7 +31,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
-#include "xla/statusor.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -243,8 +243,16 @@ class TransferManager {
   // HostShapeToDeviceShape.
   absl::StatusOr<ScopedShapedBuffer> AllocateScopedShapedBuffer(
       const Shape& on_host_shape, se::DeviceMemoryAllocator* allocator,
-      int device_ordinal,
+      int device_ordinal, int physical_device_ordinal,
       DeviceShapeRepresentationFn shape_representation_fn = nullptr);
+
+  absl::StatusOr<ScopedShapedBuffer> AllocateScopedShapedBuffer(
+      const Shape& on_host_shape, se::DeviceMemoryAllocator* allocator,
+      int device_ordinal,
+      DeviceShapeRepresentationFn shape_representation_fn = nullptr) {
+    return AllocateScopedShapedBuffer(on_host_shape, allocator, device_ordinal,
+                                      device_ordinal, shape_representation_fn);
+  }
 
   // The given ShapedBuffer holds a handle to allocated memory, but it is not
   // in the general case legal to immediately copy or access that allocated

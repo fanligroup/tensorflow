@@ -24,11 +24,12 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
-#include "third_party/nanobind/include/nanobind/nanobind.h"
-#include "third_party/nanobind/include/nanobind/stl/string.h"  // IWYU pragma: keep
-#include "third_party/nanobind/include/nanobind/stl/string_view.h"  // IWYU pragma: keep
-#include "third_party/nanobind/include/nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
-#include "third_party/nanobind/include/nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/pair.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
+#include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "xla/backends/profiler/plugin/plugin_tracer.h"
 #include "xla/backends/profiler/plugin/profiler_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
@@ -269,6 +270,23 @@ void BuildProfilerSubmodule(nb::module_& m) {
       },
       nb::arg("tensorboard_dir"));
 
+  profiler.def(
+      "get_instructions_profile",
+      [](const std::string& tensorboard_dir)
+          -> std::vector<std::pair<std::string, double>> {
+        tensorflow::profiler::ProfiledInstructionsProto profile_proto;
+        xla::ThrowIfError(
+            xla::ConvertXplaneUnderLogdirToProfiledInstructionsProto(
+                tensorboard_dir, &profile_proto));
+        std::vector<std::pair<std::string, double>> results;
+        results.reserve(profile_proto.costs().size());
+        for (const auto& c : profile_proto.costs()) {
+          results.emplace_back(c.name(), c.cost_us());
+        }
+        return results;
+      },
+      nb::arg("tensorboard_dir"));
+
   profiler.def("get_fdo_profile",
                [](nb::bytes xspace, bool as_textproto = false) -> nb::object {
                  std::string out = GetFdoProfile(
@@ -288,7 +306,8 @@ void BuildProfilerSubmodule(nb::module_& m) {
             fdo_profiles;
         for (const nb::bytes& profile : profiles) {
           tensorflow::profiler::ProfiledInstructionsProto profile_proto;
-          profile_proto.ParseFromString(profile.c_str());
+          profile_proto.ParseFromString(
+              std::string(profile.c_str(), profile.size()));
           fdo_profiles.push_back(std::move(profile_proto));
         }
 

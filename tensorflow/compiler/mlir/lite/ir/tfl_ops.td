@@ -1281,6 +1281,8 @@ def TFL_LessEqualOp : TFL_Op<"less_equal", [
 
   let hasCustomAssemblyFormat = 1;
 
+  let hasFolder = 1;
+
   let extraClassDefinition = [{
     ParseResult $cppClass::parse(OpAsmParser &parser, OperationState &result) {
       return parseOneResultSameOperandTypeOp(parser, result);
@@ -1356,6 +1358,8 @@ def TFL_GreaterEqualOp : TFL_Op<"greater_equal", [
   let builders = [TFL_ComparisonBinaryBuilder];
 
   let hasCustomAssemblyFormat = 1;
+
+  let hasFolder = 1;
 
   let extraClassDefinition = [{
     ParseResult $cppClass::parse(OpAsmParser &parser, OperationState &result) {
@@ -1554,6 +1558,8 @@ def TFL_NotEqualOp : TFL_Op<"not_equal", [
 
   let results = (outs TFL_BoolTensor:$output);
 
+  let hasFolder = 1;
+
   let builders =
   [
     OpBuilder<(ins "Value":$lhs, "Value":$rhs),
@@ -1633,8 +1639,6 @@ def TFL_EluOp: TFL_Op<"elu", [
 
 def TFL_EmbeddingLookupOp: TFL_Op<"embedding_lookup",
     [Pure,
-     PredOpTrait<"value and output must have same element type",
-       TFL_TCresVTEtIsSameAsOp<0, 1>>,
      TFL_OperandHasRank<0, 1>,
      TFL_OperandHasRankAtLeast<1, 2>,
      DynamicRangeQuantizedOpInterface,
@@ -1648,7 +1652,7 @@ def TFL_EmbeddingLookupOp: TFL_Op<"embedding_lookup",
 
   let arguments = (ins
     TFL_TensorOf<[I32]>:$lookup,
-    TFL_TensorOf<[F32, I8, UI8]>:$value
+    TFL_TensorOf<[F32, I8, UI8, QI4]>:$value
    );
 
   let results = (outs TFL_TensorOf<[F32, I8, UI8]>:$output);
@@ -1683,6 +1687,8 @@ def TFL_EqualOp: TFL_Op<"equal", [
   let results = (outs TFL_BoolTensor:$output);
 
   let builders = [TFL_ComparisonBinaryBuilder];
+
+  let hasFolder = 1;
 }
 
 def TFL_ExpOp: TFL_Op<"exp", [
@@ -1698,6 +1704,8 @@ def TFL_ExpOp: TFL_Op<"exp", [
   let arguments = (ins TFL_TensorOf<[F32, QI8, QI16]>:$x);
 
   let results = (outs TFL_TensorOf<[F32, QI8, QI16]>:$y);
+
+  let hasFolder = 1;
 
   // This builder doesn't work with quantized type, so it can only be used by
   // non-quantization tablegen patterns. Currently, it is used by the
@@ -1842,6 +1850,8 @@ def TFL_FloorOp: TFL_Op<"floor", [
 
   let results = (outs TFL_FpTensor:$y);
 
+  let hasFolder = 1;
+
   let extraClassDeclaration = [{
     // Returns whether the return types are compatible.
     static bool isCompatibleReturnTypes(TypeRange l, TypeRange r) {
@@ -1926,6 +1936,8 @@ def TFL_GreaterOp : TFL_Op<"greater", [
   let builders = [TFL_ComparisonBinaryBuilder];
 
   let hasCustomAssemblyFormat = 1;
+
+  let hasFolder = 1;
 
   let extraClassDefinition = [{
     ParseResult $cppClass::parse(OpAsmParser &parser, OperationState &result) {
@@ -2038,6 +2050,8 @@ def TFL_LessOp : TFL_Op<"less", [
 
   let hasCustomAssemblyFormat = 1;
 
+  let hasFolder = 1;
+
   let extraClassDefinition = [{
     ParseResult $cppClass::parse(OpAsmParser &parser, OperationState &result) {
       return parseOneResultSameOperandTypeOp(parser, result);
@@ -2048,7 +2062,7 @@ def TFL_LessOp : TFL_Op<"less", [
   }];
 }
 
-def TFL_LogicalAndOp : TFL_Op<"logical_and", [Pure]> {
+def TFL_LogicalAndOp : TFL_Op<"logical_and", [ResultsBroadcastableShape, Pure]> {
   let summary = "Logical AND operator";
 
   let description = [{
@@ -2062,6 +2076,8 @@ def TFL_LogicalAndOp : TFL_Op<"logical_and", [Pure]> {
   let results = (outs TFL_BoolTensor:$output);
 
   let hasCustomAssemblyFormat = 1;
+
+  let hasFolder = 1;
 
   let extraClassDefinition = [{
     ParseResult $cppClass::parse(OpAsmParser &parser, OperationState &result) {
@@ -2085,9 +2101,11 @@ def TFL_LogicalNotOp : TFL_Op<"logical_not", [
   let arguments = (ins TFL_BoolTensor:$lhs);
 
   let results = (outs TFL_BoolTensor:$output);
+
+  let hasFolder = 1;
 }
 
-def TFL_LogicalOrOp : TFL_Op<"logical_or", [Pure]> {
+def TFL_LogicalOrOp : TFL_Op<"logical_or", [ResultsBroadcastableShape, Pure]> {
   let summary = "Logical OR operator";
 
   let description = [{
@@ -2101,6 +2119,8 @@ def TFL_LogicalOrOp : TFL_Op<"logical_or", [Pure]> {
   let results = (outs TFL_BoolTensor:$output);
 
   let hasCustomAssemblyFormat = 1;
+
+  let hasFolder = 1;
 
   let extraClassDefinition = [{
     ParseResult $cppClass::parse(OpAsmParser &parser, OperationState &result) {
@@ -2805,6 +2825,8 @@ def TFL_PowOp : TFL_Op<"pow", [
 
   let hasCustomAssemblyFormat = 1;
 
+  let hasFolder = 1;
+
   let extraClassDefinition = [{
     ParseResult $cppClass::parse(OpAsmParser &parser, OperationState &result) {
       return parseOneResultSameOperandTypeOp(parser, result);
@@ -2882,6 +2904,8 @@ def TFL_ReluOp: TFL_Op<"relu", [
   let arguments = (ins TFL_TensorOf<[F32, QUI8, QI8, QI16]>:$x);
 
   let results = (outs TFL_TensorOf<[F32, QUI8, QI8, QI16]>:$y);
+
+  let hasFolder = 1;
 
   // This builder doesn't work with quantized type, so it can only be used by
   // non-quantization tablegen patterns. Currently, it is used by the
@@ -3158,6 +3182,8 @@ def TFL_SelectOp : TFL_Op<"select", [
 
   let results = (outs
     TFL_TensorOf<[F32, I1, I8, I16, I32, I64, UI32, QI8, QUI8, QI16, TFL_Quint8]>:$output);
+
+  let hasFolder = 1;
 
   // TODO(jpienaar): autogenerate this.
   let builders = [
@@ -4052,7 +4078,7 @@ def TFL_DynamicUpdateSliceOp: TFL_Op<"dynamic_update_slice", [
   let arguments = (ins
     TFL_TensorOf<[I1, I8, I32, I64, F32]>:$operand,
     TFL_TensorOf<[I1, I8, I32, I64, F32]>:$update,
-    TFL_I32Tensor:$start_indices
+    TFL_I32OrI64Tensor:$start_indices
   );
 
   let results = (
@@ -4082,6 +4108,7 @@ def TFL_BitcastOp : TFL_Op<"bitcast", [Pure]> {
 }
 
 def TFL_BitwiseXorOp : TFL_Op<"bitwise_xor", [
+    ResultsBroadcastableShape,
     Commutative,
     SameOperandsAndResultElementType,
     Pure]> {
@@ -4099,6 +4126,8 @@ def TFL_BitwiseXorOp : TFL_Op<"bitwise_xor", [
   let results = (outs
     TFL_TensorOf<[I8, UI8, I16, UI16, I32, UI32]>:$output
   );
+
+  let hasFolder = 1;
 }
 
 def TFL_RightShiftOp : TFL_Op<"right_shift", [
@@ -4123,6 +4152,7 @@ def TFL_RightShiftOp : TFL_Op<"right_shift", [
 //===----------------------------------------------------------------------===//
 // Quantization ops.
 //===----------------------------------------------------------------------===//
+
 def TFL_DequantizeOp: TFL_Op<"dequantize", [NoMemoryEffect]> {
   let summary = "Dequantize operator";
 

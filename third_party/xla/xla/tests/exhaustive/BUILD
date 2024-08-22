@@ -28,36 +28,49 @@ cc_library(
     tags = ["no_pip"],
     deps = [
         "//xla:bit_cast",
+        "//xla:executable_run_options",
+        "//xla:fp_util",
+        "//xla:literal",
+        "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:types",
         "//xla:xla_data_proto_cc",
+        "//xla/client:executable_build_options",
         "//xla/client:xla_builder",
-        "//xla/client/lib:constants",
-        "//xla/client/lib:math",
+        "//xla/client:xla_computation",
         "//xla/service:shaped_buffer",
         "//xla/tests:client_library_test_base",
-        "//xla/tests:literal_test_util",
-        "//xla/tests:test_macros_header",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/meta:type_traits",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@eigen_archive//:eigen3",
+        "@local_tsl//tsl/platform:env",
+        "@local_tsl//tsl/platform:path",
+        "@local_tsl//tsl/platform:statusor",
+        "@local_tsl//tsl/platform:test",
     ],
 )
 
-cc_library(
-    name = "exhaustive_unary_test_f32_or_smaller_lib",
+filegroup(
+    name = "exhaustive_unary_f32_or_smaller_test_srcs",
     testonly = True,
-    srcs = ["exhaustive_unary_test_f32_or_smaller.cc"],
-    tags = ["no_pip"],
-    deps = [
-        ":exhaustive_op_test_utils",
-        "//xla:util",
-        "//xla/client:xla_builder",
-        "//xla/tests:client_library_test_base",
-        "@com_google_absl//absl/flags:flag",
-    ],
+    srcs = ["exhaustive_unary_f32_or_smaller_test.cc"],
 )
 
 xla_test(
-    name = "exhaustive_unary_test_f32_or_smaller",
-    srcs = ["exhaustive_test_main.cc"],
+    name = "exhaustive_unary_f32_or_smaller_test",
+    timeout = "long",
+    srcs = [
+        "exhaustive_test_main.cc",
+        ":exhaustive_unary_f32_or_smaller_test_srcs",
+    ],
     backends = [
         "gpu",
         "cpu",
@@ -71,15 +84,28 @@ xla_test(
         "no_oss",
     ],
     deps = [
-        ":exhaustive_unary_test_f32_or_smaller_lib",
-        "@local_tsl//tsl/platform",
+        ":exhaustive_op_test_utils",
+        "//xla:literal",
+        "//xla:types",
+        "//xla/client:xla_builder",
+        "//xla/client/lib:constants",
+        "//xla/client/lib:math",
+        "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/types:span",
+        "@local_tsl//tsl/platform:logging",
         "@local_tsl//tsl/platform:test",
     ],
 )
 
 xla_test(
-    name = "exhaustive_unary_test_f64",
-    srcs = ["exhaustive_unary_test_f64.cc"],
+    name = "exhaustive_unary_f64_test",
+    timeout = "long",
+    srcs = [
+        "exhaustive_test_main.cc",
+        "exhaustive_unary_f64_test.cc",
+    ],
     backends = [
         "gpu",
         "cpu",
@@ -95,16 +121,27 @@ xla_test(
     ],
     deps = [
         ":exhaustive_op_test_utils",
-        "//xla:util",
+        "//xla:literal",
         "//xla/client:xla_builder",
-        "//xla/tests:client_library_test_base",
+        "//xla/client/lib:constants",
+        "//xla/client/lib:math",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/types:span",
+        "@local_tsl//tsl/platform:logging",
+        "@local_tsl//tsl/platform:test",
     ],
 )
 
 xla_test(
-    name = "exhaustive_unary_test_complex",
-    srcs = ["exhaustive_unary_test_complex.cc"],
+    name = "exhaustive_unary_complex_test",
+    timeout = "long",
+    srcs = [
+        "exhaustive_test_main.cc",
+        "exhaustive_unary_complex_test.cc",
+    ],
     backends = [
         "gpu",
         "cpu",
@@ -118,19 +155,33 @@ xla_test(
     ],
     deps = [
         ":exhaustive_op_test_utils",
+        "//xla:literal",
         "//xla:types",
         "//xla/client:xla_builder",
-        "//xla/tests:client_library_test_base",
-        "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/types:span",
+        "@local_tsl//tsl/platform:logging",
+        "@local_tsl//tsl/platform:test",
+    ],
+)
+
+filegroup(
+    name = "exhaustive_binary_16_bit_test_srcs",
+    srcs = [
+        "exhaustive_binary_16_bit_test.cc",
     ],
 )
 
 xla_test(
     name = "exhaustive_binary_16_bit_test",
-    srcs = ["exhaustive_binary_16_bit_test.cc"],
+    timeout = "long",
+    srcs = [
+        "exhaustive_test_main.cc",
+        ":exhaustive_binary_16_bit_test_srcs",
+    ],
     backends = [
         "gpu",
         "cpu",
@@ -144,13 +195,27 @@ xla_test(
     ],
     deps = [
         ":exhaustive_op_test_utils",
+        "//xla:literal",
+        "//xla:types",
+        "//xla/client:xla_builder",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/types:span",
+        "@eigen_archive//:eigen3",
+        "@local_tsl//tsl/platform:logging",
+        "@local_tsl//tsl/platform:test",
     ],
 )
 
 xla_test(
-    name = "exhaustive_binary_test_f32_f64",
-    srcs = ["exhaustive_binary_test_f32_f64.cc"],
+    name = "exhaustive_binary_f32_f64_test",
+    timeout = "long",
+    srcs = [
+        "exhaustive_binary_f32_f64_test.cc",
+        "exhaustive_test_main.cc",
+    ],
     backends = [
         "gpu",
         "cpu",
@@ -164,6 +229,14 @@ xla_test(
     ],
     deps = [
         ":exhaustive_op_test_utils",
+        "//xla:literal",
+        "//xla/client:xla_builder",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/types:span",
+        "@local_tsl//tsl/platform:logging",
+        "@local_tsl//tsl/platform:test",
     ],
 )

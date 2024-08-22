@@ -92,9 +92,8 @@ absl::Status ValidateArrayCreationInput(
     if (canonicalized_sharding_memory_kind != buffer_memory_kind) {
       return InvalidArgument(
           "PjRtBuffer's memory kind does not match sharding's memory kind. Got "
-          "PjRtBuffer's memory kind: %s vs shardings's memory kind: %s",
-          buffer_memory_kind.DebugString(),
-          canonicalized_sharding_memory_kind.DebugString());
+          "PjRtBuffer's memory kind: %v vs shardings's memory kind: %v",
+          buffer_memory_kind, canonicalized_sharding_memory_kind);
     }
   }
   return absl::OkStatus();
@@ -116,8 +115,8 @@ absl::StatusOr<MemoryKind> GetMemoryKindFromPjRtBuffers(
                                              pjrt_buffer->device())) {
       return InvalidArgument(
           "Memory kind mismatch between PjRtBuffers. Got one buffer with "
-          "memory kind: %s and another with memory_kind: %s",
-          first_memory_kind.DebugString(), memory_kind.DebugString());
+          "memory kind: %v and another with memory_kind: %v",
+          first_memory_kind, memory_kind);
     }
   }
   return first_memory_kind;
@@ -440,20 +439,22 @@ absl::StatusOr<Memory*> GetMemorySpaceFromMemoryKind(
   }
   if (memory == nullptr) {
     return InvalidArgument(
-        "Invalid memory kind: %s; available memory kinds: %s",
-        memory_kind.DebugString(),
+        "Invalid memory kind: %v; available memory kinds: %s", memory_kind,
         absl::StrJoin(device->Memories(), ", ",
                       [](std::string* out, Memory* m) {
-                        absl::StrAppend(out, m->Kind().DebugString());
+                        absl::StrAppend(out, m->Kind());
                       }));
   }
   return memory;
 }
 
-absl::StatusOr<tsl::RCReference<Array>> PjRtArray::Reshard(
-    std::shared_ptr<const Sharding> new_sharding,
+absl::StatusOr<tsl::RCReference<Array>> PjRtArray::Copy(
+    std::optional<xla::ifrt::DeviceList> devices,
+    std::optional<xla::ifrt::MemoryKind> memory_kind,
     ArrayCopySemantics semantics) {
   DCHECK(this);
+  TF_ASSIGN_OR_RETURN(auto new_sharding,
+                      sharding().WithDeviceAssignment(devices, memory_kind));
   if (new_sharding->devices().size() != sharding_->devices().size()) {
     return InvalidArgument(
         "Resharding to a different number of devices: %d; expected %d",

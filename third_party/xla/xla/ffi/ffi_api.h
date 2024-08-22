@@ -19,14 +19,18 @@ limitations under the License.
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <variant>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "xla/executable_run_options.h"
 #include "xla/ffi/api/api.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/c_api_internal.h"  // IWYU pragma: keep
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_context.h"
+#include "xla/ffi/execution_state.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/stream.h"
@@ -45,23 +49,40 @@ namespace xla::ffi {
 // Calling XLA FFI handlers
 //===----------------------------------------------------------------------===//
 
+// Options for calling XLA FFI handlers. Backend specific options must be
+// constructed from `xla::ExecuteRunOptions`, to give FFI handlers access to
+// XLA runtime internals.
 struct CallOptions {
-  int32_t device_ordinal = -1;
+  struct CpuOptions {
+    const Eigen::ThreadPoolDevice* intra_op_thread_pool = nullptr;
+  };
 
-  se::Stream* stream = nullptr;
-  se::DeviceMemoryAllocator* allocator = nullptr;
+  struct GpuOptions {
+    se::Stream* stream = nullptr;
+    se::DeviceMemoryAllocator* allocator = nullptr;
+  };
+
+  using BackendOptions = std::variant<std::monostate, CpuOptions, GpuOptions>;
+
+  int32_t device_ordinal = -1;
+  BackendOptions backend_options = {};
 
   const HloComputation* called_computation = nullptr;
   const ExecutionContext* execution_context = nullptr;
+  ExecutionState* execution_state = nullptr;
 };
 
 // Takes ownership of the XLA FFI error and returns underlying status. Frees
 // `error` if it's not nullptr; returns OK status otherwise.
 absl::Status TakeStatus(XLA_FFI_Error* error);
 
-absl::Status Call(
-    Ffi& handler, CallFrame& call_frame, const CallOptions& options = {},
-    XLA_FFI_ExecutionStage stage = XLA_FFI_ExecutionStage_EXECUTE);
+absl::Status CallWithApi(const XLA_FFI_Api* api, Ffi& handler,
+                         CallFrame& call_frame, const CallOptions& options = {},
+                         ExecutionStage stage = ExecutionStage::kExecute);
+
+absl::Status Call(Ffi& handler, CallFrame& call_frame,
+                  const CallOptions& options = {},
+                  ExecutionStage stage = ExecutionStage::kExecute);
 
 absl::Status Call(
     XLA_FFI_Handler* handler, CallFrame& call_frame,
@@ -110,8 +131,8 @@ absl::StatusOr<HandlerRegistration> FindHandler(std::string_view name,
                                                 std::string_view platform);
 
 // Returns all registered calls in the static registry for a given platform.
-absl::flat_hash_map<std::string, HandlerRegistration> StaticRegisteredHandlers(
-    std::string_view platform);
+absl::StatusOr<absl::flat_hash_map<std::string, HandlerRegistration>>
+StaticRegisteredHandlers(std::string_view platform);
 
 //===----------------------------------------------------------------------===//
 // XLA FFI Api Implementation

@@ -31,10 +31,11 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
-#include "xla/service/gpu/autotuner_util.h"
+#include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/buffer_sharing.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
 #include "xla/service/gpu/executable.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_dataflow_analysis.h"
@@ -117,11 +118,16 @@ class GpuCompiler : public LLVMCompiler {
 
   virtual int32_t GetToolkitVersion() const = 0;
 
+  virtual absl::StatusOr<bool> CanUseLinkModules(
+      const HloModuleConfig& config) {
+    return false;
+  }
+
  protected:
   struct BackendCompileResult {
     std::string asm_text;
     std::vector<uint8_t> binary;
-    Thunk::BinaryMap dnn_compiled_graphs;
+    BinaryMap dnn_compiled_graphs;
   };
 
   // During compilation with device, stream_exec != null and autotune_results
@@ -154,7 +160,8 @@ class GpuCompiler : public LLVMCompiler {
   // Add autotuning passes for GEMM fusions.
   virtual absl::Status AddGemmFusionAutotuningPasses(
       HloPassPipeline* pipeline, HloModule* hlo_module,
-      AutotuneConfig& autotune_config, tsl::thread::ThreadPool* thread_pool) {
+      AutotuneConfig& autotune_config, tsl::thread::ThreadPool* thread_pool,
+      const MultiProcessKeyValueStore& key_value_store) {
     return absl::OkStatus();
   }
 
@@ -164,10 +171,10 @@ class GpuCompiler : public LLVMCompiler {
     return absl::OkStatus();
   }
 
-  // Runs CUDNN fusion compiler pass.
-  virtual absl::Status RunCudnnFusionCompilerPass(
-      HloModule* module, se::StreamExecutor* stream_exec,
-      Thunk::BinaryMap* dnn_compiled_graphs) {
+  // Runs cuDNN fusion and custom call compiler passes.
+  virtual absl::Status RunCudnnCompilerPasses(HloModule* module,
+                                              se::StreamExecutor* stream_exec,
+                                              BinaryMap* dnn_compiled_graphs) {
     return absl::OkStatus();
   }
 
@@ -186,8 +193,9 @@ class GpuCompiler : public LLVMCompiler {
       se::StreamExecutor* executor, const CompileOptions& options,
       const se::DeviceDescription& gpu_device_info);
 
-  absl::StatusOr<BackendCompileResult> CompileToTargetBinary(
-      const HloModuleConfig& module_config, llvm::Module* llvm_module,
+  absl::StatusOr<BackendCompileResult> CompileAndLink(
+      const HloModuleConfig& module_config,
+      CompileModuleResults& compile_module_results,
       se::GpuComputeCapability gpu_version, se::StreamExecutor* stream_exec,
       const CompileOptions& options, const HloModule* debug_module);
 
@@ -226,12 +234,8 @@ class GpuCompiler : public LLVMCompiler {
 
   absl::Status PrepareHloModuleForIrEmitting(HloModule* hlo_module);
 
-  virtual absl::StatusOr<bool> CanUseLinkModules(
-      const HloModuleConfig& config) {
-    return false;
-  }
-
   virtual absl::StatusOr<std::vector<uint8_t>> LinkModules(
+      se::GpuComputeCapability gpu_compute_capability,
       se::StreamExecutor* stream_exec,
       std::vector<std::vector<uint8_t>> modules,
       const DebugOptions& debug_options) {

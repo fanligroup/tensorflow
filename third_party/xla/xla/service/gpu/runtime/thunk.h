@@ -32,13 +32,14 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "mlir/IR/Operation.h"  // from @llvm-project
+#include "mlir/IR/Operation.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/runtime/nccl_api.h"
 #include "xla/service/gpu/runtime/nccl_clique.h"
 #include "xla/service/gpu/runtime/nccl_clique_key.h"
@@ -164,13 +165,9 @@ class Thunk {
     kSendDone,
     kTriangularSolve,
     kWhile,
-    kFusedMHA,
     kWaitForStreams,
     kCuDnn
   };
-
-  // <HLO computation fingerprint, serialized compiled object>.
-  using BinaryMap = absl::flat_hash_map<std::string, std::string>;
 
   // TODO(ezhulenev): This should become a part of StreamExecutor library, but
   // for now we keep it here as a Thunk implementation detail. It's not yet
@@ -327,6 +324,9 @@ class Thunk {
 
     // XLA FFI execution context.
     const ffi::ExecutionContext* ffi_execution_context = nullptr;
+
+    // Total local device count.
+    int local_device_count = 0;
   };
 
   //===--------------------------------------------------------------------===//
@@ -382,6 +382,8 @@ class Thunk {
     // Additional compute streams on which thunks launch operations.
     ExecutionStreamIdMap additional_compute_streams;
 
+    bool mock_collectives = false;
+
    private:
     friend class CommandBufferThunk;
 
@@ -394,7 +396,8 @@ class Thunk {
                   SendDeviceMemoryFunction* send_device_memory_function,
                   RecvDeviceMemoryFunction* recv_device_memory_function,
                   const ffi::ExecutionContext* ffi_execution_context,
-                  ExecutionStreamIdMap additional_compute_streams = {});
+                  ExecutionStreamIdMap additional_compute_streams = {},
+                  bool mock_collectives = false);
   };
 
   //===--------------------------------------------------------------------===//
@@ -410,7 +413,7 @@ class Thunk {
   Thunk(const Thunk&) = delete;
   Thunk& operator=(const Thunk&) = delete;
 
-  virtual std::string ToStringExtra(int indent) const { return ""; }
+  virtual std::string ToString(int indent) const { return ""; }
   Kind kind() const { return kind_; }
   std::string_view profile_annotation() const { return profile_annotation_; }
 
@@ -451,6 +454,9 @@ class Thunk {
   static absl::StatusOr<se::Stream*> GetStreamForExecution(
       ExecutionStreamId stream_id, const ExecuteParams& params);
 
+  // Returns `true` if this thunk requires inter-GPU communication.
+  bool IsCollective() const;
+
  private:
   Kind kind_;
   std::string profile_annotation_;
@@ -458,12 +464,7 @@ class Thunk {
 };
 
 // A sequence of thunks.
-class ThunkSequence : public std::vector<std::unique_ptr<Thunk>> {
- public:
-  std::string ToString(int indent = 0,
-                       std::function<std::string(const Thunk*)>
-                           get_thunk_annotation = nullptr) const;
-};
+using ThunkSequence = std::vector<std::unique_ptr<Thunk>>;
 
 std::ostream& operator<<(std::ostream& os, Thunk::Kind kind);
 

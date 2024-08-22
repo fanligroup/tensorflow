@@ -571,8 +571,11 @@ PartitionedHlo PartitionedHlo::ReshardNoCache(
              "not able to go from sharding "
           << sharding().ToString(/*include_metadata=*/true) << " to "
           << target.ToString(/*include_metadata=*/true)
-          << " without doing a full rematerialization of the tensor. You "
-             "probably want to enrich the sharding annotations to prevent "
+          << " without doing a full rematerialization of the tensor for HLO "
+             "operation: "
+          << hlo_->ToString()
+          << ". You probably want to enrich the sharding annotations to "
+             "prevent "
              "this from happening.";
     }
     return Replicate().Reshard(target);
@@ -3316,6 +3319,7 @@ absl::Status SpmdPartitioningVisitor::HandleSingleDevice(
     auto param = true_b.AddInstruction(HloInstruction::CreateParameter(
         /*parameter_number=*/0, operand_shape, "true_branch_param"));
     std::vector<HloInstruction*> new_operands;
+    new_operands.reserve(operands.size());
     for (int64_t i = 0; i < operands.size(); ++i) {
       new_operands.push_back(true_b.AddInstruction(
           HloInstruction::CreateGetTupleElement(*operand_shapes[i], param, i)));
@@ -4040,31 +4044,33 @@ absl::Status SpmdPartitioningVisitor::HandleWhile(HloInstruction* hlo) {
   const HloSharding& sharding = hlo->sharding();
 
   // Shardings for the body parameter, body root, and cond parameter must be
-  // the same, and the condition root must be replicated so that all partitions
-  // follow the same control flow.
+  // the same.
   hlo->while_condition()->parameter_instruction(0)->set_sharding(sharding);
   hlo->while_body()->parameter_instruction(0)->set_sharding(sharding);
-  const HloSharding& cond_root_sharding =
-      hlo->while_condition()->root_instruction()->sharding();
-  TF_RETURN_IF_ERROR(partitioner_
-                         ->PartitionComputation(hlo->while_condition(),
-                                                cond_root_sharding.IsManual()
-                                                    ? cond_root_sharding
-                                                    : HloSharding::Replicate(),
-                                                next_channel_id_, logger_,
-                                                call_graph_)
-                         .status());
+
+  // The condition root must be replicated so that all partitions follow the
+  // same control flow.
+  HloInstruction* cond_root = hlo->while_condition()->root_instruction();
+  const HloSharding cond_root_sharding =
+      hlo_sharding_util::ReplicateAllDataDims(cond_root->sharding());
+  cond_root->set_sharding(cond_root_sharding);
+  TF_RETURN_IF_ERROR(
+      partitioner_
+          ->PartitionComputation(hlo->while_condition(), cond_root_sharding,
+                                 next_channel_id_, logger_, call_graph_)
+          .status());
   TF_RETURN_IF_ERROR(partitioner_
                          ->PartitionComputation(hlo->while_body(), sharding,
                                                 next_channel_id_, logger_,
                                                 call_graph_)
                          .status());
-  SetPartitionedHlo(hlo, [&] {
-    return b_.AddInstruction(HloInstruction::CreateWhile(
-        MakePartitionedShape(hlo->shape(), sharding), hlo->while_condition(),
-        hlo->while_body(),
-        GetPartitionedHlo(hlo->operand(0)).Reshard(sharding).hlo()));
-  });
+
+  HloInstruction* whileOp = b_.AddInstruction(HloInstruction::CreateWhile(
+      MakePartitionedShape(hlo->shape(), sharding), hlo->while_condition(),
+      hlo->while_body(),
+      GetPartitionedHlo(hlo->operand(0)).Reshard(sharding).hlo()));
+  hlo->SetupDerivedInstruction(whileOp);
+  SetPartitionedHlo(hlo, [&] { return whileOp; });
   return absl::OkStatus();
 }
 
@@ -4095,9 +4101,19 @@ absl::Status SpmdPartitioningVisitor::HandleConditional(HloInstruction* hlo) {
     if (!hlo->operand(0)->sharding().IsManual()) {
       // We replicate the predicate of the conditional (the first operand) so
       // that all partitions follow the same control flow.
-      cond = GetPartitionedHlo(hlo->operand(0))
-                 .Reshard(HloSharding::Replicate())
-                 .hlo();
+      if (hlo->operand(0)->sharding().IsManualSubgroup()) {
+        auto grouped_sharding = hlo_sharding_util::GetManualSubgroupSharding(
+            hlo->operand(0)->sharding());
+        grouped_sharding.sharding = HloSharding::Replicate();
+        cond =
+            GetPartitionedHlo(hlo->operand(0))
+                .Reshard(hlo_sharding_util::UngroupSharding(grouped_sharding))
+                .hlo();
+      } else {
+        cond = GetPartitionedHlo(hlo->operand(0))
+                   .Reshard(HloSharding::Replicate())
+                   .hlo();
+      }
     }
     return b_.AddInstruction(HloInstruction::CreateConditional(
         MakePartitionedShape(hlo->shape(), hlo->sharding()), cond,
@@ -4118,6 +4134,7 @@ absl::Status SpmdPartitioningVisitor::HandleOutfeed(HloInstruction* hlo) {
   if (hlo->sharding().IsManual()) {
     auto clone_from_original = [&](const HloSharding& shared_sharding) {
       std::vector<HloInstruction*> new_operands;
+      new_operands.reserve(hlo->operand_count());
       for (int64_t i = 0; i < hlo->operand_count(); ++i) {
         new_operands.push_back(
             GetPartitionedHlo(hlo->operand(i)).Reshard(shared_sharding).hlo());
@@ -4299,6 +4316,7 @@ absl::Status SpmdPartitioningVisitor::HandleRng(HloInstruction* hlo) {
   }
   auto clone_from_original = [&](const HloSharding& shared_sharding) {
     std::vector<HloInstruction*> new_operands;
+    new_operands.reserve(hlo->operand_count());
     for (int64_t i = 0; i < hlo->operand_count(); ++i) {
       new_operands.push_back(
           GetPartitionedHlo(hlo->operand(i)).Reshard(shared_sharding).hlo());
@@ -4329,6 +4347,7 @@ absl::Status SpmdPartitioningVisitor::HandleRng(HloInstruction* hlo) {
   TF_RET_CHECK(!hlo->sharding().IsTileMaximal());
   // Replicate the operands and run partitioned Rng on all devices.
   std::vector<HloInstruction*> new_operands;
+  new_operands.reserve(hlo->operand_count());
   for (int64_t i = 0; i < hlo->operand_count(); ++i) {
     new_operands.push_back(GetPartitionedHlo(hlo->operand(i))
                                .Reshard(HloSharding::Replicate())
@@ -4648,6 +4667,7 @@ absl::Status SpmdPartitioningVisitor::HandleSelectAndScatter(
 
 absl::Status SpmdPartitioningVisitor::HandleTuple(HloInstruction* hlo) {
   std::vector<HloInstruction*> new_operands;
+  new_operands.reserve(hlo->operand_count());
   for (int64_t i = 0; i < hlo->operand_count(); ++i) {
     new_operands.push_back(
         GetPartitionedHlo(hlo->operand(i))
@@ -5363,6 +5383,7 @@ absl::Status SpmdPartitioner::PreprocessHlos(
           if (amount < 0) {
             continue;
           }
+          TF_RETURN_IF_ERROR(HandleRotateRightWhilePreprocessing(computation));
           HloInstruction* to_rotate = lhs->mutable_operand(0);
           HloInstruction* rotate = computation->AddInstruction(
               CreateCustomCallSPMDInternal_RotateRight(to_rotate, dim, amount));

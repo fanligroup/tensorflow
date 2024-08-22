@@ -25,6 +25,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#if GOOGLE_CUDA
+#include "third_party/gpus/cuda/include/cuda.h"
+#endif
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -89,10 +92,6 @@ static int64_t NotifyExecCreated() {
 static int64_t NotifyExecDestroyed() {
   DCHECK_GE(alive_execs.load(std::memory_order_relaxed), 1);
   return alive_execs.fetch_sub(1, std::memory_order_relaxed) - 1;
-}
-
-/*static*/ int64_t GpuCommandBuffer::AllocatedExecs() {
-  return allocated_execs.load(std::memory_order_relaxed);
 }
 
 /*static*/ int64_t GpuCommandBuffer::AliveExecs() {
@@ -334,15 +333,14 @@ absl::Status GpuCommandBuffer::CheckNumCommandBuffers(
 absl::StatusOr<GpuGraphNodeHandle> GpuCommandBuffer::CreateBarrierNode(
     const Dependencies& dependencies) {
   GpuGraphNodeHandle barrier_handle = nullptr;
-#if !defined(TENSORFLOW_USE_ROCM)
-  // TODO(b/316343054): Instead of empty nodes we create no-op kernel nodes as
-  // barriers because CUDA 12.3 does not support empty nodes inside
-  // conditional command buffers. This should be fixed in CUDA 12.4.
+#if !defined(TENSORFLOW_USE_ROCM) && CUDA_VERSION < 12040
+  // Instead of empty nodes we create no-op kernel nodes as barriers because
+  // CUDA 12.3 does not support empty nodes inside conditional command buffers.
   TF_ASSIGN_OR_RETURN(NoOpKernel * noop, GetNoOpKernel());
 
   TF_RETURN_IF_ERROR(GpuDriver::GraphAddKernelNode(
       &barrier_handle, graph_, dependencies, "noop",
-      AsGpuKernel(&**noop)->AsGpuFunctionHandle(), 1, 1, 1, 1, 1, 1, 0,
+      AsGpuKernel(&**noop)->gpu_function(), 1, 1, 1, 1, 1, 1, 0,
       /*kernel_params=*/nullptr, /*extra=*/nullptr));
 #else
   TF_RETURN_IF_ERROR(
@@ -526,7 +524,7 @@ absl::Status GpuCommandBuffer::LaunchWithPackedArgs(
            packed_args.number_of_arguments());
 
   const GpuKernel* gpu_kernel = AsGpuKernel(&kernel);
-  GpuFunctionHandle gpu_func = gpu_kernel->AsGpuFunctionHandle();
+  GpuFunctionHandle gpu_func = gpu_kernel->gpu_function();
 
   void** kernel_params =
       const_cast<void**>(packed_args.argument_addresses().data());
@@ -1008,6 +1006,8 @@ absl::Status GpuCommandBuffer::Finalize() {
       } else {
         TF_RETURN_IF_ERROR(retry);
       }
+    } else {
+      TF_RETURN_IF_ERROR(instantiated);
     }
 
     uint64_t end_nanos = tsl::Env::Default()->NowNanos();
@@ -1019,7 +1019,9 @@ absl::Status GpuCommandBuffer::Finalize() {
             << "; conditionals: " << num_cond_cmd_buffers
             << "; alive executable graphs: " << AliveExecs();
 
+#if !defined(TENSORFLOW_USE_ROCM) && CUDA_VERSION < 12040
     TF_RETURN_IF_ERROR(DisableBarriersExecution(exec_));
+#endif
 
   } else if (mode_ == Mode::kPrimary && state_ == State::kUpdate) {
     // If this is a finalization after update, we don't have to do anything as
@@ -1071,6 +1073,17 @@ GpuCommandBuffer::barriers(ExecutionScopeId id) const {
   if (auto it = execution_scopes_.find(id); it != execution_scopes_.end())
     return it->second.barriers;
   return {};
+}
+
+absl::Status GpuCommandBuffer::Submit(Stream* stream) {
+  if (mode_ != CommandBuffer::Mode::kPrimary) {
+    return absl::InvalidArgumentError(
+        "Can't submit non-primary command buffer for execution");
+  }
+
+  VLOG(3) << "Launch command buffer executable graph " << exec_
+          << " on a stream: " << stream;
+  return GpuDriver::GraphLaunch(exec_, AsGpuStreamValue(stream));
 }
 
 }  // namespace stream_executor::gpu

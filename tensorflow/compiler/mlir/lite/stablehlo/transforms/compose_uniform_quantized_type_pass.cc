@@ -174,7 +174,7 @@ LogicalResult MatchInverseScalesOperand(Value inverse_scales) {
   if (!inverse_scale_constant_op) {
     llvm::dbgs()
         << "Inverse scales should be a constant. Instead, it was defined by: "
-        << inverse_scale_constant_op << ".\n";
+        << inverse_scales.getDefiningOp() << ".\n";
     return failure();
   }
 
@@ -1144,7 +1144,8 @@ class ComposeUniformQuantizedDotGeneralOp
             .clone(output_uniform_quantized_type),
         /*lhs=*/op.getLhs(), /*rhs=*/op.getRhs(),
         /*dot_dimension_numbers=*/op.getDotDimensionNumbers(),
-        /*precision_config=*/op.getPrecisionConfigAttr());
+        /*precision_config=*/op.getPrecisionConfigAttr(),
+        /*algorithm=*/op.getAlgorithmAttr());
 
     rewriter.replaceAllUsesWith(op.getResult(), new_dot_general_op.getResult());
 
@@ -1489,7 +1490,8 @@ class ComposeUniformQuantizedDotGeneralOpWithTwoQuantizedActivations
             .clone(output_uniform_quantized_type),
         /*lhs=*/op.getLhs(), /*rhs=*/op.getRhs(),
         /*dot_dimension_numbers=*/op.getDotDimensionNumbers(),
-        /*precision_config=*/op.getPrecisionConfigAttr());
+        /*precision_config=*/op.getPrecisionConfigAttr(),
+        /*algorithm=*/op.getAlgorithmAttr());
 
     rewriter.replaceAllUsesWith(op.getResult(), new_dot_general_op.getResult());
 

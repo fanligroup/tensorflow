@@ -23,6 +23,7 @@ limitations under the License.
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/base/internal/endian.h"
@@ -32,6 +33,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "tensorflow/core/platform/file_system.h"
 #include "tensorflow/core/platform/macros.h"
+#include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/profiler/convert/trace_viewer/trace_events_filter_interface.h"
 #include "tensorflow/core/profiler/convert/trace_viewer/trace_events_util.h"
 #include "tensorflow/core/profiler/convert/trace_viewer/trace_viewer_visibility.h"
@@ -44,7 +46,6 @@ limitations under the License.
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/file_system.h"
-#include "tsl/platform/status.h"
 #include "tsl/profiler/utils/timespan.h"
 
 namespace tensorflow {
@@ -60,11 +61,6 @@ constexpr uint64_t kLayerResolutions[] = {
 };
 
 constexpr int NumLevels() { return TF_ARRAYSIZE(kLayerResolutions); }
-constexpr uint64_t LayerResolutionPs(unsigned level) {
-  // This sometimes gets called in a tight loop, so levels are precomputed.
-  return level >= NumLevels() ? 0 : kLayerResolutions[level];
-}
-
 // Constants used by the LevelDB Table-based efficient trace viewer storage.
 static constexpr char kTraceMetadataKey[] = "/trace";
 static constexpr absl::string_view kLevelKey("123456789ABCDEFGHIJKLMNOPQ");
@@ -130,6 +126,26 @@ void MaybeAddEventUniqueId(std::vector<TraceEvent*>& events) {
 }
 
 }  // namespace
+
+uint64_t LayerResolutionPs(unsigned level) {
+  // This sometimes gets called in a tight loop, so levels are precomputed.
+  return level >= NumLevels() ? 0 : kLayerResolutions[level];
+}
+
+std::pair<uint64_t, uint64_t> GetLevelBoundsForDuration(uint64_t duration_ps) {
+  int i = 0;
+  for (; i < NumLevels(); ++i) {
+    if (duration_ps > kLayerResolutions[i]) {
+      if (i == 0) {
+        return std::make_pair(kLayerResolutions[i], kint64max);
+      } else {
+        return std::make_pair(kLayerResolutions[i], kLayerResolutions[i - 1]);
+      }
+    }
+  }
+  // Tiny event. Put it in the bottom bucket. ([0, 1ps])
+  return std::make_pair(0, 1);
+}
 
 std::vector<TraceEvent*> MergeEventTracks(
     const std::vector<const TraceEventTrack*>& event_tracks) {
@@ -214,7 +230,7 @@ absl::Status ReadFileTraceMetadata(std::string& filepath, Trace* trace) {
 //
 // Note that each event only appears exactly once, at the first layer it's
 // eligible for.
-tsl::Status DoStoreAsLevelDbTable(
+absl::Status DoStoreAsLevelDbTable(
     std::unique_ptr<tsl::WritableFile>& file, const Trace& trace,
     const std::vector<std::vector<const TraceEvent*>>& events_by_level) {
   tsl::table::Options options;
@@ -267,7 +283,7 @@ tsl::Status DoStoreAsLevelDbTable(
   return file->Close();
 }
 
-tsl::Status DoLoadFromLevelDbTable(
+absl::Status DoLoadFromLevelDbTable(
     const std::string& filename,
     std::unique_ptr<TraceEventsFilterInterface> filter,
     std::unique_ptr<TraceVisibilityFilter> visibility_filter,
@@ -384,7 +400,7 @@ tsl::Status DoLoadFromLevelDbTable(
   }
   LOG(INFO) << "Added " << visible_events_count
             << " visible events from LevelDb fast file: " << filename;
-  return tsl::OkStatus();
+  return absl::OkStatus();
 }
 
 }  // namespace profiler

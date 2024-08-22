@@ -29,6 +29,7 @@ limitations under the License.
 #include "tensorflow/compiler/tf2xla/xla_helpers.h"
 #include "xla/client/client_library.h"
 #include "xla/stream_executor/platform_manager.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "tensorflow/core/lib/monitoring/cell_reader.h"
 #include "tensorflow/core/lib/monitoring/test_utils.h"
 #include "tensorflow/core/platform/env.h"
@@ -37,7 +38,6 @@ limitations under the License.
 #include "tensorflow/core/protobuf/tpu/compile_metadata.pb.h"
 #include "tensorflow/core/tpu/kernels/tpu_compile_op_support.h"
 #include "tensorflow/core/util/debug_data_dumper.h"
-#include "tsl/lib/core/status_test_util.h"
 #include "tsl/lib/monitoring/test_utils.h"
 #include "tsl/platform/statusor.h"
 
@@ -366,6 +366,23 @@ TEST(LegalizeTFTest, SkipsTensorListSetItemIfDimensionsTooLarge) {
   // get stuck on a broken dynamic update slice.
   ASSERT_THAT(compilation_result,
               Not(ComputationProtoContains("%.*=.*DynamicUpdateSlice")));
+}
+
+TEST(LegalizeTFTest, LegalizesFunctionWithBoundedDynamicArg) {
+  static constexpr char kMlirModuleWithBoundedDynamicArgStr[] = R"(
+  module attributes {tf.versions = {bad_consumers = [], min_consumer = 0 : i32, producer = 268 : i32}} {
+  func.func @main(%arg0: tensor<?xi32, #mhlo.type_extensions<bounds = [3]>> ) -> (tensor<?xi32, #mhlo.type_extensions<bounds = [3]>>) {
+    func.return %arg0 : tensor<?xi32, #mhlo.type_extensions<bounds = [3]>>
+  }
+})";
+
+  auto compilation_result = CompileMlirModule(
+      kMlirModuleWithBoundedDynamicArgStr,
+      ConfigProto::Experimental::MLIR_BRIDGE_ROLLOUT_UNSPECIFIED);
+
+  ASSERT_TRUE(compilation_result.ok());
+  EXPECT_THAT(compilation_result,
+              ComputationProtoContains("element_type:.S32\n.*dimensions: 3"));
 }
 
 }  // namespace v2

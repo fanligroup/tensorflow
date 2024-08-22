@@ -24,6 +24,7 @@ import tempfile as _tempfile
 from typing import Optional
 import warnings
 
+from tensorflow.compiler.mlir.lite.metrics import converter_error_data_pb2
 from tensorflow.compiler.mlir.lite.python import wrap_converter
 from tensorflow.compiler.mlir.quantization.stablehlo import quantization_config_pb2
 from tensorflow.compiler.mlir.quantization.stablehlo import quantization_options_pb2 as quant_opts_pb2
@@ -33,7 +34,6 @@ from tensorflow.lite.python.convert_phase import Component
 from tensorflow.lite.python.convert_phase import convert_phase
 from tensorflow.lite.python.convert_phase import ConverterError
 from tensorflow.lite.python.convert_phase import SubComponent
-from tensorflow.lite.python.metrics import converter_error_data_pb2
 from tensorflow.lite.python.metrics.wrapper import metrics_wrapper as _metrics_wrapper
 from tensorflow.lite.toco import model_flags_pb2 as _model_flags_pb2
 from tensorflow.lite.toco import toco_flags_pb2 as _conversion_flags_pb2
@@ -600,6 +600,7 @@ def build_conversion_flags(
     qdq_conversion_mode=None,
     disable_per_channel_quantization_for_dense_layers=False,
     enable_composite_direct_lowering=False,
+    model_origin_framework=lite_constants.UNSET,
     **_,
 ):
   """Builds protocol buffer describing a conversion of a model.
@@ -731,6 +732,8 @@ def build_conversion_flags(
       layers. The flag works only for integer quantized model.
     enable_composite_direct_lowering: If set, attempts to lower composite ops
       directly to tflite ops.
+    model_origin_framework: A str specifying the framework of the original
+      model. Can be {TENSORFLOW, KERAS, JAX, PYTORCH}
 
   Returns:
     conversion_flags: protocol buffer describing the conversion process.
@@ -853,6 +856,11 @@ def build_conversion_flags(
   )
   conversion_flags.enable_composite_direct_lowering = (
       enable_composite_direct_lowering
+  )
+  conversion_flags.model_origin_framework = (
+      _conversion_flags_pb2.TocoFlags.ModelOriginFramework.Value(
+          model_origin_framework
+      )
   )
   return conversion_flags
 

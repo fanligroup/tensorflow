@@ -46,10 +46,10 @@ limitations under the License.
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 #include "xla/test.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tsl/platform/macros.h"
@@ -482,6 +482,25 @@ TEST_F(LiteralUtilTest, DifferentLayoutEquality) {
   rowmajor.Set<float>({1, 1}, 4.0);
 
   EXPECT_EQ(rowmajor, colmajor);
+}
+
+TEST_F(LiteralUtilTest, DifferentLayoutInEquality) {
+  // Test in equality with literals which have different layouts when layout
+  // sensitive equality is used.
+  Literal colmajor(ShapeUtil::MakeShapeWithDenseLayout(F32, {2, 2}, {0, 1}));
+  colmajor.Set<float>({0, 0}, 1.0);
+  colmajor.Set<float>({0, 1}, 2.0);
+  colmajor.Set<float>({1, 0}, 3.0);
+  colmajor.Set<float>({1, 1}, 4.0);
+
+  Literal rowmajor(ShapeUtil::MakeShapeWithDenseLayout(F32, {2, 2}, {1, 0}));
+  rowmajor.Set<float>({0, 0}, 1.0);
+  rowmajor.Set<float>({0, 1}, 2.0);
+  rowmajor.Set<float>({1, 0}, 3.0);
+  rowmajor.Set<float>({1, 1}, 4.0);
+
+  EXPECT_FALSE(rowmajor.Equal(colmajor, true));
+  EXPECT_FALSE(colmajor.Equal(rowmajor, true));
 }
 
 TEST_F(LiteralUtilTest, TupleEquality) {
@@ -2561,6 +2580,14 @@ TEST_F(LiteralUtilTest, IsEqualAt) {
 TEST_F(LiteralUtilTest, CreateFromShapeWithUnknownLeafArrays) {
   Literal c1 = Literal::CreateFromShapeWithUnknownLeafArrays(
       ShapeUtil::MakeShape(F32, {4, 4}));
+  EXPECT_FALSE(c1.IsKnown());
+}
+
+TEST_F(LiteralUtilTest, CreateFromShapeWithUnknownLeafArraysS4Tuple) {
+  auto inner_shape = ShapeUtil::MakeShape(S4, {4, 4});
+  inner_shape.mutable_layout()->set_element_size_in_bits(4);
+  Literal c1 = Literal::CreateFromShapeWithUnknownLeafArrays(
+      ShapeUtil::MakeTupleShape({inner_shape}));
   EXPECT_FALSE(c1.IsKnown());
 }
 

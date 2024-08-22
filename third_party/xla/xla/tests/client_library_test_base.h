@@ -21,6 +21,7 @@ limitations under the License.
 #include <type_traits>
 #include <vector>
 
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array2d.h"
@@ -32,14 +33,13 @@ limitations under the License.
 #include "xla/client/xla_computation.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
-#include "xla/statusor.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/manifest_checking_test.h"
 #include "xla/tests/test_utils.h"
+#include "xla/tsl/lib/core/bitmap.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/core/bitmap.h"
 #include "tsl/platform/ml_dtypes.h"
 #include "tsl/platform/test.h"
 
@@ -70,6 +70,9 @@ class ClientLibraryTestBase : public ManifestCheckingTest {
   // Creates a new ClientLibraryTestBase with custom client options.
   ClientLibraryTestBase(se::Platform* platform,
                         const LocalClientOptions& client_options);
+
+  // Returns the name of the suite currently being run.
+  std::string SuiteName() const;
 
   // Returns the name of the test currently being run.
   std::string TestName() const;

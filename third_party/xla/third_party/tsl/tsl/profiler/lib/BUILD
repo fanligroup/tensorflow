@@ -1,6 +1,6 @@
 load("@local_tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@local_xla//xla/tsl:tsl.bzl", "if_not_android", "internal_visibility", "nvtx_headers")
-load("@local_xla//xla/tsl:tsl.default.bzl", "filegroup")
+load("@local_xla//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load("//tsl/platform:build_config_root.bzl", "if_static")
 load(
@@ -38,7 +38,9 @@ filegroup(
         "scoped_memory_debug_annotation.h",
         "traceme.h",
         "traceme_encode.h",
+        "//tsl/profiler/utils:mobile_srcs_no_runtime",
     ],
+    compatible_with = get_compatible_with_portable(),
     visibility = ["//visibility:public"],
 )
 
@@ -266,6 +268,7 @@ cc_library(
         "//tsl/platform:logging",
         "//tsl/platform:macros",
         "//tsl/platform:types",
+        "//tsl/profiler/utils:no_init",
         "@com_google_absl//absl/strings",
     ] + if_not_android([
         "//tsl/profiler/backends/cpu:traceme_recorder",
@@ -274,7 +277,7 @@ cc_library(
 )
 
 cc_library(
-    name = "nvtx_utils",
+    name = "nvtx_utils_impl",
     srcs = if_cuda_is_configured(
         ["nvtx_utils.cc"],
         ["nvtx_utils_stub.cc"],
@@ -298,22 +301,30 @@ config_setting(
 )
 
 cc_library(
+    name = "nvtx_utils",
+    hdrs = ["nvtx_utils.h"],
+    visibility = ["//visibility:public"],
+    deps = select({
+        # Remove this once we clean up all the CUDA specific deps.
+        "libtpu_on_gce": [":nvtx_utils_libtpu"],
+        "//conditions:default": [":nvtx_utils_impl"],
+    }),
+)
+
+cc_library(
     name = "scoped_annotation",
     hdrs = [
         "scoped_annotation.h",
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":nvtx_utils",
         "//tsl/platform:macros",
         "//tsl/platform:types",
         "@com_google_absl//absl/strings",
     ] + if_not_android([
         "//tsl/profiler/backends/cpu:annotation_stack",
-    ]) + select({
-        # Remove this once we clean up all the CUDA specific deps.
-        "libtpu_on_gce": [":nvtx_utils_libtpu"],
-        "//conditions:default": [":nvtx_utils"],
-    }),
+    ]),
 )
 
 tsl_cc_test(

@@ -245,6 +245,41 @@ TEST_F(GpuFusibleTest, TransposesMinorDimension) {
   EXPECT_FALSE(TransposesMinorDimension(tuple->operand(5)));
 }
 
+TEST_F(GpuFusibleTest, TransposesMinorDimensionSkipTrivialDimensions) {
+  auto module = ParseAndReturnVerifiedModule(absl::StrCat(kModulePrefix, R"(
+    ENTRY entry {
+      default_layout = f32[10,20,1,1]{3,2,1,0} parameter(0)
+      non_default_layout = f32[10,20,1,1]{1,2,3,0} parameter(1)
+
+      // Only trivial dimensions are swapped.
+      transpose_minor_default = f32[10,20,1,1]{3,2,1,0} transpose(default_layout), dimensions={0,1,3,2}
+      // The first non-trivial dimension is still the same in input and output.
+      transpose_nontrivial_minor_default = f32[10,1,20,1]{3,2,1,0} transpose(default_layout), dimensions={0,2,1,3}
+      no_transpose_minor_default = f32[10,20,1,1]{2,3,1,0} transpose(default_layout), dimensions={0,1,3,2}
+      // We swap the most major dimension with a trivial dimension.
+      transpose_one_major_default = f32[1,20,10,1]{3,2,1,0} transpose(default_layout), dimensions={2,1,0,3}
+      // The first two non-trivial dimensions are swapped.
+      transpose_two_major_default = f32[20,10,1,1]{3,2,1,0} transpose(default_layout), dimensions={1,0,2,3}
+
+      transpose_minor_non_default = f32[10,1,20,1]{1,2,3,0} transpose(non_default_layout), dimensions={0,2,1,3}
+      no_transpose_minor_non_default = f32[10,20,1,1]{1,2,0,3} transpose(non_default_layout), dimensions={0,1,3,2}
+      transpose_major_non_default = f32[10,20,1,1]{1,2,3,0} transpose(non_default_layout), dimensions={0,1,3,2}
+
+      ROOT r = tuple(transpose_minor_default, transpose_nontrivial_minor_default, no_transpose_minor_default, transpose_one_major_default, transpose_two_major_default,
+                     transpose_minor_non_default, no_transpose_minor_non_default, transpose_major_non_default)
+    })"));
+
+  auto* tuple = (*module)->entry_computation()->root_instruction();
+  EXPECT_FALSE(TransposesMinorDimension(tuple->operand(0)));
+  EXPECT_FALSE(TransposesMinorDimension(tuple->operand(1)));
+  EXPECT_FALSE(TransposesMinorDimension(tuple->operand(2)));
+  EXPECT_TRUE(TransposesMinorDimension(tuple->operand(3)));
+  EXPECT_TRUE(TransposesMinorDimension(tuple->operand(4)));
+  EXPECT_FALSE(TransposesMinorDimension(tuple->operand(5)));
+  EXPECT_FALSE(TransposesMinorDimension(tuple->operand(6)));
+  EXPECT_FALSE(TransposesMinorDimension(tuple->operand(7)));
+}
+
 TEST_F(GpuFusibleTest, CopyTransposesMinorDimension) {
   auto module = ParseAndReturnVerifiedModule(absl::StrCat(kModulePrefix, R"(
     ENTRY entry {
@@ -263,6 +298,29 @@ TEST_F(GpuFusibleTest, CopyTransposesMinorDimension) {
 
   auto* tuple = (*module)->entry_computation()->root_instruction();
   EXPECT_TRUE(TransposesMinorDimension(tuple->operand(0)));
+  EXPECT_FALSE(TransposesMinorDimension(tuple->operand(1)));
+  EXPECT_TRUE(TransposesMinorDimension(tuple->operand(2)));
+  EXPECT_FALSE(TransposesMinorDimension(tuple->operand(3)));
+}
+
+TEST_F(GpuFusibleTest, CopyTransposesMinorDimensionSkipTrivialDimensions) {
+  auto module = ParseAndReturnVerifiedModule(absl::StrCat(kModulePrefix, R"(
+    ENTRY entry {
+      default_layout = f32[10,20,1,1]{3,2,1,0} parameter(0)
+      non_default_layout = f32[10,20,1,1]{1,2,3,0} parameter(1)
+
+      copy_transpose_minor_default = f32[10,20,1,1]{2,3,1,0} copy(default_layout)
+      copy_no_transpose_minor_default = f32[10,20,1,1]{3,2,1,0} copy(default_layout)
+
+      copy_transpose_minor_non_default = f32[10,20,1,1]{2,0,3,1} copy(non_default_layout)
+      copy_no_transpose_minor_non_default = f32[10,20,1,1]{1,2,3,0} copy(non_default_layout)
+
+      ROOT r = tuple(copy_transpose_minor_default, copy_no_transpose_minor_default,
+                     copy_transpose_minor_non_default, copy_no_transpose_minor_non_default)
+    })"));
+
+  auto* tuple = (*module)->entry_computation()->root_instruction();
+  EXPECT_FALSE(TransposesMinorDimension(tuple->operand(0)));
   EXPECT_FALSE(TransposesMinorDimension(tuple->operand(1)));
   EXPECT_TRUE(TransposesMinorDimension(tuple->operand(2)));
   EXPECT_FALSE(TransposesMinorDimension(tuple->operand(3)));
@@ -486,7 +544,9 @@ TEST_F(GpuFusibleTest, FusionHeroesAreCompatible_TransposeFusionNotCompatible) {
     fused_computation_1 {
       p0.1 = f32[64,32]{1,0} parameter(0)
       neg = f32[64,32]{1,0} negate(p0.1)
-      ROOT transpose = f32[32,64]{1,0} transpose(neg), dimensions={1,0}
+      bc = f32[1,64,32]{2,1,0} bitcast(neg)
+      transpose = f32[1,32,64]{2,1,0} transpose(bc), dimensions={0,2,1}
+      ROOT bc2 = f32[32,64]{1,0} bitcast(transpose)
     }
 
     fused_computation_2 {
@@ -504,10 +564,12 @@ TEST_F(GpuFusibleTest, FusionHeroesAreCompatible_TransposeFusionNotCompatible) {
   const HloInstruction* fusion_1 =
       module->entry_computation()->root_instruction();
   const HloInstruction* fusion_2 = fusion_1->operand(0);
-  EXPECT_FALSE(FusionHeroesAreCompatible(fusion_1->fused_expression_root(),
-                                         fusion_2->fused_expression_root()));
-  EXPECT_FALSE(FusionHeroesAreCompatible(fusion_2->fused_expression_root(),
-                                         fusion_1->fused_expression_root()));
+  EXPECT_FALSE(
+      FusionHeroesAreCompatible(fusion_1->fused_expression_root(),
+                                fusion_2->fused_expression_root()->operand(0)));
+  EXPECT_FALSE(
+      FusionHeroesAreCompatible(fusion_2->fused_expression_root()->operand(0),
+                                fusion_1->fused_expression_root()));
 }
 
 TEST_F(GpuFusibleTest, ShapesCompatibleForMultiOutputFusion_LoopFusions) {
@@ -1462,9 +1524,9 @@ TEST_F(GpuFusibleTest, ChooseFusionKind) {
 HloModule module
 
 ENTRY computation {
-    p = f32[5000,6000]{1,0} parameter(0)
-    c = f32[6000,5000] transpose(p), dimensions={1,0}
-    ROOT r = f32[300,20,5000] reshape(c)
+    p = f32[1,5000,6000]{2,1,0} parameter(0)
+    c = f32[1,6000,5000]{2,1,0} transpose(p), dimensions={0,2,1}
+    ROOT r = f32[300,20,5000]{2,1,0} reshape(c)
 }
 )")
                     .value();
@@ -1642,6 +1704,33 @@ TEST_F(GpuFusibleTest, GetFusionRootsWithMakeTupleGTESequence) {
   EXPECT_EQ(roots, expected_result);
 }
 
+TEST_F(GpuFusibleTest, GetFusionRootsWithTupleMultipleSameOperands) {
+  auto module = ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+
+    fusion {
+      p1 = s32[32] parameter(0)
+      add0 = s32[32] add(p1, p1)
+      ROOT _ = (s32[32], s32[32]) tuple(add0, add0)
+    }
+
+    ENTRY entry {
+      p0 = s32[32] parameter(0)
+      ROOT fusion = (s32[32], s32[32]) fusion(p0), kind=kCustom, calls=fusion
+    }
+  )")
+                    .value();
+
+  auto called_computations =
+      module->entry_computation()->root_instruction()->called_computations();
+  ASSERT_EQ(called_computations.size(), 1);
+
+  auto fusion = called_computations.front();
+  auto roots = GetFusionRoots(*fusion);
+  auto add0 = fusion->root_instruction()->operand(0);
+  EXPECT_THAT(GetFusionRoots(*fusion), ElementsAre(add0, add0));
+}
+
 TEST_F(GpuFusibleTest, GetFusibleComputations) {
   auto module = ParseAndReturnVerifiedModule(absl::StrCat(kModulePrefix, R"(
     fused_reduce {
@@ -1671,6 +1760,24 @@ TEST_F(GpuFusibleTest, GetFusibleComputations) {
   EXPECT_THAT(fusible, ElementsAre(module->GetComputationWithName("body_a"),
                                    module->GetComputationWithName("body_b"),
                                    module->entry_computation()));
+}
+
+TEST_F(GpuFusibleTest, GetSharedMemoryUsage) {
+  auto module = ParseAndReturnVerifiedModule(absl::StrCat(kModulePrefix, R"(
+    wrapped_transpose {
+      p0 = f32[128,1024,2]{2,1,0} parameter(0)
+      ROOT transpose = f32[1024,128,2]{2,1,0} transpose(p0), dimensions={1,0,2}
+    }
+    ENTRY main {
+      p = f32[128,1024,2] parameter(0)
+      ROOT res = f32[1024,128,2]{2,1,0} fusion(p), kind=kInput, calls=wrapped_transpose
+    })"))
+                    .value();
+  auto& debug_options = module->mutable_config().mutable_debug_options();
+  debug_options.set_xla_gpu_mlir_emitter_level(3);
+  FusionInfoCache cache;
+  auto fusion = module->entry_computation()->root_instruction();
+  EXPECT_EQ(cache.GetSharedMemoryUsage(*fusion), 32 * 33 * 2 * 4);
 }
 
 }  // namespace gpu

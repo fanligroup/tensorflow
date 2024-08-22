@@ -17,7 +17,9 @@ limitations under the License.
 
 #include <utility>
 
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/shape_util.h"
@@ -106,25 +108,6 @@ absl::StatusOr<std::vector<std::pair<int64_t, int64_t>>> ConvertNx2Attribute(
   return out;
 }
 
-absl::StatusOr<FftType> ConvertFftType(llvm::StringRef type_string) {
-  std::optional<mlir::mhlo::FftType> type =
-      mlir::mhlo::symbolizeEnum<mlir::mhlo::FftType>(type_string);
-  if (!type) return InvalidArgument("Unknown FFT type %s", type_string.str());
-
-  switch (*type) {
-    case mlir::mhlo::FftType::FFT:
-      return xla::FftType::FFT;
-    case mlir::mhlo::FftType::IFFT:
-      return xla::FftType::IFFT;
-    case mlir::mhlo::FftType::RFFT:
-      return xla::FftType::RFFT;
-    case mlir::mhlo::FftType::IRFFT:
-      return xla::FftType::IRFFT;
-    default:
-      return InvalidArgument("Unknown FFT type enum #%d", *type);
-  }
-}
-
 absl::StatusOr<TriangularSolveOptions::Transpose> ConvertTranspose(
     llvm::StringRef transpose_string) {
   std::optional<mlir::mhlo::Transpose> transpose =
@@ -202,6 +185,41 @@ std::optional<xla::OpSharding> ConvertSharding(llvm::StringRef sharding) {
       xla::ParseSharding(sharding.str());
   if (sharding_cpp.ok()) return sharding_cpp->ToProto();
   return std::nullopt;
+}
+
+std::optional<xla::HloInputOutputAliasProto> ConvertInputOutputAlias(
+    llvm::ArrayRef<mlir::Attribute> aliasing) {
+  if (aliasing.empty()) return std::nullopt;
+
+  xla::HloInputOutputAliasProto input_output_alias_proto;
+  for (auto attr : aliasing) {
+    auto entry_attr = mlir::cast<mlir::DictionaryAttr>(attr);
+    auto alias_attr = mlir::cast<mlir::DictionaryAttr>(entry_attr.get("alias"));
+    mlir::ArrayRef<int64_t> output_index =
+        mlir::cast<mlir::DenseI64ArrayAttr>(entry_attr.get("output_index"))
+            .asArrayRef();
+    mlir::ArrayRef<int64_t> parameter_index =
+        mlir::cast<mlir::DenseI64ArrayAttr>(alias_attr.get("parameter_index"))
+            .asArrayRef();
+    HloInputOutputAliasProto::AliasEntryProto entry;
+    entry.mutable_output_shape_index()->Add(output_index.begin(),
+                                            output_index.end());
+    entry.set_parameter_number(
+        mlir::cast<mlir::IntegerAttr>(alias_attr.get("parameter_number"))
+            .getInt());
+    entry.mutable_parameter_shape_index()->Add(parameter_index.begin(),
+                                               parameter_index.end());
+    mlir::StringRef kind =
+        mlir::cast<mlir::StringAttr>(alias_attr.get("kind")).getValue();
+    if (kind == "may_alias")
+      entry.set_kind(xla::Kind::MAY_ALIAS);
+    else if (kind == "must_alias")
+      entry.set_kind(xla::Kind::MUST_ALIAS);
+    else
+      entry.set_kind(xla::Kind::UNDEFINED_ALIAS);
+    input_output_alias_proto.add_entries()->Swap(&entry);
+  }
+  return input_output_alias_proto;
 }
 
 DotDimensionNumbers ConvertDotDimensionNumbers(

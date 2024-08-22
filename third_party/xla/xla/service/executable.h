@@ -22,6 +22,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/check.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "absl/types/variant.h"
 #include "xla/debug_options_flags.h"
@@ -37,7 +38,6 @@ limitations under the License.
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
-#include "xla/statusor.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
@@ -157,11 +157,14 @@ class ExecutionOutput {
         to_be_released_(std::move(to_be_released)) {}
   // TODO(b/170310047): remove this overload.
   ExecutionOutput(Shape on_host_shape, Shape on_device_shape,
-                  se::DeviceMemoryAllocator* allocator, int device_ordinal)
-      : result_(std::move(on_device_shape), allocator, device_ordinal) {}
+                  se::DeviceMemoryAllocator* allocator, int device_ordinal,
+                  int physical_device_ordinal = -1)
+      : result_(std::move(on_device_shape), allocator, device_ordinal,
+                physical_device_ordinal) {}
   ExecutionOutput(Shape on_device_shape, se::DeviceMemoryAllocator* allocator,
-                  int device_ordinal)
-      : result_(std::move(on_device_shape), allocator, device_ordinal) {}
+                  int device_ordinal, int physical_device_ordinal = -1)
+      : result_(std::move(on_device_shape), allocator, device_ordinal,
+                physical_device_ordinal) {}
   ExecutionOutput(ExecutionOutput&&) = default;
   ExecutionOutput& operator=(ExecutionOutput&&) = default;
 
