@@ -25,7 +25,7 @@ package(
 
 exports_files([
     "lit.cfg.py",
-])
+] + if_google(["lit_google_cfg.py"]))
 
 xla_package_groups()
 
@@ -60,7 +60,6 @@ filegroup(
 tf_proto_library(
     name = "xla_data_proto",
     srcs = ["xla_data.proto"],
-    cc_api_version = 2,
     create_grpc_library = True,
     make_default_target_header_only = True,
     visibility = ["//visibility:public"],
@@ -69,7 +68,6 @@ tf_proto_library(
 tf_proto_library(
     name = "xla_proto",
     srcs = ["xla.proto"],
-    cc_api_version = 2,
     create_grpc_library = True,
     make_default_target_header_only = True,
     protodeps = [
@@ -516,8 +514,8 @@ xla_cc_test(
         ":test",
         ":util",
         ":xla_data_proto_cc",
-        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@local_tsl//tsl/platform:env",
@@ -1219,7 +1217,6 @@ cc_library(
 tf_proto_library(
     name = "autotune_results_proto",
     srcs = ["autotune_results.proto"],
-    cc_api_version = 2,
     make_default_target_header_only = True,
     protodeps = [":autotuning_proto"],
     visibility = ["//visibility:public"],
@@ -1316,11 +1313,6 @@ cc_library(
 # copybara:uncomment_end
 
 cc_library(
-    name = "empty",
-    visibility = ["//visibility:public"],
-)
-
-cc_library(
     name = "sort_json",
     srcs = ["sort_json.cc"],
     hdrs = ["sort_json.h"],
@@ -1345,13 +1337,6 @@ xla_cc_test(
         "@local_tsl//tsl/platform:test",
         "@local_tsl//tsl/platform:test_main",
     ],
-)
-
-# Needed to workaround https://github.com/bazelbuild/bazel/issues/21519
-alias(
-    name = "bazel_issue_21519",
-    actual = ":empty",
-    visibility = ["//visibility:public"],
 )
 
 bzl_library(

@@ -55,8 +55,11 @@ cc_library(
         # keep sorted
         ":rocm_diagnostics",
         "//xla/stream_executor",
+        "//xla/stream_executor/gpu:context",
+        "//xla/stream_executor/gpu:context_map",
         "//xla/stream_executor/gpu:gpu_diagnostics_header",
         "//xla/stream_executor/gpu:gpu_driver_header",
+        "//xla/stream_executor/gpu:scoped_activate_context",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
         "@com_google_absl//absl/base",
@@ -68,6 +71,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:hip",
         "@local_config_rocm//rocm:rocm_headers",
+        "@local_tsl//tsl/platform:casts",
         "@local_tsl//tsl/platform:env",
         "@local_tsl//tsl/platform:errors",
         "@local_tsl//tsl/platform:logging",
@@ -86,6 +90,7 @@ cc_library(
     deps = if_rocm_is_configured([
         # keep sorted
         "//xla/stream_executor",
+        "//xla/stream_executor/gpu:context",
         "//xla/stream_executor/gpu:gpu_driver_header",
         "//xla/stream_executor/gpu:gpu_runtime_header",
         "//xla/stream_executor/gpu:gpu_types_header",
@@ -142,8 +147,10 @@ cc_library(
         # keep sorted
         ":rocm_driver",
         "//xla/stream_executor",
+        "//xla/stream_executor/gpu:context",
         "//xla/stream_executor/gpu:gpu_event_header",
         "//xla/stream_executor/gpu:gpu_stream_header",
+        "//xla/stream_executor/gpu:scoped_activate_context",
     ]),
 )
 
@@ -199,10 +206,14 @@ cc_library(
     alwayslink = True,
 )
 
-rocm_library(
-    name = "hip_conditional_kernels",
-    srcs = if_rocm_is_configured(["hip_conditional_kernels.cu.cc"]),
-    deps = if_rocm_is_configured(["@local_config_rocm//rocm:rocm_headers"]),
+cc_library(
+    name = "command_buffer_kernels",
+    srcs = ["command_buffer_kernels.cc"],
+    deps = [
+        "//xla/stream_executor:kernel_spec",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
 )
 
 cc_library(

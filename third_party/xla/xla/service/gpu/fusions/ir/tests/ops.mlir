@@ -127,9 +127,12 @@ func.func @apply_indexing_no_dims(%s0: index) -> (index, index) {
 
 // -----
 
-#map = #xla_gpu.indexing_map<(d0)[s0, s1] -> (s0, s1), domain: d0 in [0, 3], s0 in [0, 1024], s1 in [0, 32]>
-func.func @loop_op(%input: tensor<1024x32xf32>, %init: f32, %dim: index) -> (f32) {
-  %sum = xla_gpu.loop (%dim)[%i, %j] in #map iter_args(%sum_ = %init) -> (f32) {
+#map = #xla_gpu.indexing_map<(d0)[s0, s1] -> (s0, s1),
+         domain: d0 in [0, 3], s0 in [0, 1024], s1 in [0, 32]>
+func.func @loop_op(%input: tensor<1024x32xf32>, %init: f32,
+                   %dim: index) -> (f32) {
+  %sum = xla_gpu.loop (%dim)[%i, %j] -> (%r0, %r1)
+     in #map iter_args(%sum_ = %init) -> (f32) {
     %t = tensor.extract %input[%i, %j] : tensor<1024x32xf32>
     %add = arith.addf %sum_, %t : f32
     xla_gpu.yield %add : f32
@@ -137,11 +140,12 @@ func.func @loop_op(%input: tensor<1024x32xf32>, %init: f32, %dim: index) -> (f32
   func.return %sum : f32
 }
 // CHECK: #[[$MAP:.*]] = #xla_gpu.indexing_map
-// CHECK:      %0 = xla_gpu.loop (%{{.*}})[%[[I:.*]], %[[J:.*]]] in #[[$MAP]]
+// CHECK:       xla_gpu.loop (%{{.*}})[%[[I:.*]], %[[J:.*]]] ->
+// CHECK-SAME:     (%[[R0:.*]], %[[R1:.*]]) in #[[$MAP]]
 // CHECK-SAME:     iter_args(%[[SUM_ITER:.*]] = %{{.*}}) -> (f32) {
 // CHECK:        %[[EXTRACTED:.*]] = tensor.extract %{{.*}}[%[[I]], %[[J]]]
 // CHECK:        %[[ADD:.*]] = arith.addf %{{.*}}, %[[EXTRACTED]] : f32
-// CHECK:        xla_gpu.yield %[[ADD]] : f32 
+// CHECK:        xla_gpu.yield %[[ADD]] : f32
 // CHECK:      } {xla.range = [0 : index, 42 : index]}
 
 // -----
@@ -152,7 +156,7 @@ func.func private @exp(%p0: tensor<32x64xf32>, %i: index, %j: index) -> f32
 #map1 = #xla_gpu.indexing_map<(d0, d1)[s0, s1] -> (s0, s1), domain: d0 in [0, 32], d1 in [0, 2], s0 in [0, 1024], s1 in [0, 32]>
 func.func @materialize_and_insert(%input: tensor<32x64xf32>, %i: index, %j: index, %output: tensor<32x64xf32>) -> tensor<32x64xf32> {
   %0 = xla_gpu.materialize @exp(%input) at #map(%i, %j) : (tensor<32x64xf32>) -> !xla_gpu.indexed_vector<32x64xf32, #map1>
-  %1 = xla_gpu.insert %0 into %output at #map1(%i, %j) : !xla_gpu.indexed_vector<32x64xf32, #map1> -> tensor<32x64xf32> into tensor<32x64xf32>
+  %1 = xla_gpu.insert %0 into %output at #map1(%i, %j) : !xla_gpu.indexed_vector<32x64xf32, #map1> -> tensor<32x64xf32>
   func.return %1 : tensor<32x64xf32>
 }
 

@@ -148,12 +148,13 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
         se::dnn::FMHAMaskKind dnn_mask_type,
         GetDNNFmhaMaskKindFromCudnnFmhaMaskKind(cudnn_mask_type));
 
+    const int sliding_window_length = config.sliding_window_length();
     TF_ASSIGN_OR_RETURN(
         se::gpu::CudnnGraph graph,
         se::gpu::GetCudnnFlashAttentionOperationGraph(
             dnn_support, lhs_bmm1, rhs_bmm1, rhs_bmm2, output, bias, activation,
             static_cast<float>(config.fmha_scale()), dropout_rate > 0.0,
-            dropout_rate, dnn_mask_type));
+            dropout_rate, dnn_mask_type, sliding_window_length));
     return std::move(graph);
   } else if (IsFwdCustomCallTofMHAF8(*custom_call)) {
     TF_ASSIGN_OR_RETURN(
@@ -252,11 +253,8 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
     TF_RET_CHECK(output_index ==
                  custom_call->shape().tuple_shapes().size() - 1);
 
-    const DebugOptions &debug_options =
-        custom_call->GetModule()->config().debug_options();
-    bool force_deterministic =
-        debug_options.xla_gpu_deterministic_ops() ||
-        debug_options.xla_gpu_exclude_nondeterministic_ops();
+    const bool force_deterministic =
+        RequireDeterminism(custom_call->GetModule()->config());
     config.set_force_deterministic(force_deterministic);
     TF_RETURN_IF_ERROR(custom_call->set_backend_config(gpu_config));
 
@@ -306,6 +304,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
         se::dnn::FMHAMaskKind dnn_mask_type,
         GetDNNFmhaMaskKindFromCudnnFmhaMaskKind(cudnn_mask_type));
 
+    const int sliding_window_length = config.sliding_window_length();
     TF_ASSIGN_OR_RETURN(
         se::gpu::CudnnGraph graph,
         se::gpu::GetCudnnFlashAttentionBackwardOperationGraph(
@@ -313,7 +312,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
             bmm2_grad_gemm1_lhs, bmm2_grad_gemm2_rhs, d_output, d_bmm1_lhs,
             d_bmm1_rhs, d_bmm2_rhs, bias, dropout_rate, config.seed(),
             config.fmha_scale(), dropout_rate > 0.0, bias != std::nullopt,
-            dnn_mask_type, force_deterministic));
+            dnn_mask_type, force_deterministic, sliding_window_length));
     return std::move(graph);
   }
 }

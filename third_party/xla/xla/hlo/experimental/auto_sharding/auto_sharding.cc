@@ -89,9 +89,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace spmd {
@@ -466,17 +463,15 @@ absl::StatusOr<std::unique_ptr<StrategyGroup>> FollowReduceStrategy(
     strategy_group = CreateTupleStrategyGroup(instruction_id);
     strategy_group->childs.reserve(ins->shape().tuple_shapes_size());
     for (size_t i = 0; i < ins->shape().tuple_shapes_size(); ++i) {
-      auto child_strategy_status = FollowReduceStrategy(
-          ins, ins->shape().tuple_shapes().at(i), ins->operand(i),
-          ins->operand(i + ins->shape().tuple_shapes_size()), instruction_id,
-          strategy_map, strategy_groups, cluster_env, allow_mixed_mesh_shape,
-          crash_at_error);
-      if (!child_strategy_status.ok()) {
-        return child_strategy_status;
-      }
-      child_strategy_status.value()->tuple_element_idx = i;
-      strategy_group->childs.push_back(
-          std::move(child_strategy_status.value()));
+      TF_ASSIGN_OR_RETURN(
+          std::unique_ptr<StrategyGroup> child_strategy,
+          FollowReduceStrategy(
+              ins, ins->shape().tuple_shapes().at(i), ins->operand(i),
+              ins->operand(i + ins->shape().tuple_shapes_size()),
+              instruction_id, strategy_map, strategy_groups, cluster_env,
+              allow_mixed_mesh_shape, crash_at_error));
+      child_strategy->tuple_element_idx = i;
+      strategy_group->childs.push_back(std::move(child_strategy));
     }
   } else if (output_shape.IsArray()) {
     strategy_group = CreateLeafStrategyGroup(instruction_id, ins, strategy_map,
@@ -528,8 +523,7 @@ absl::StatusOr<std::unique_ptr<StrategyGroup>> FollowReduceStrategy(
           ins->dimensions(), ins->to_apply());
       operand_clone->set_sharding(
           src_strategy_group->strategies[sid].output_sharding);
-      absl::Status s = new_reduce->ReplaceOperandWith(0, operand_clone.get());
-      if (!s.ok()) {
+      if (!new_reduce->ReplaceOperandWith(0, operand_clone.get()).ok()) {
         continue;
       }
       CHECK(InferReduceShardingFromOperand(new_reduce.get(), false, true));
@@ -1432,14 +1426,6 @@ absl::StatusOr<std::unique_ptr<StrategyGroup>> CreateAllStrategiesGroup(
   return strategy_group;
 }
 
-// The sharding is replicated or the total number of tiles is over or equal to
-// the total number of devices. If returns true, this sharding is likely
-// provided by users.
-bool ShardingIsComplete(const HloSharding& sharding, size_t total_num_devices) {
-  return sharding.TotalNumTiles() >= total_num_devices ||
-         sharding.IsReplicated();
-}
-
 // Two shardings shard the same dimension of a given tensor.
 bool ShardingIsConsistent(const HloSharding& partial_sharding,
                           const HloSharding& complete_sharding, bool strict) {
@@ -1472,7 +1458,7 @@ bool ShardingIsConsistent(const HloSharding& partial_sharding,
 // reduce the current iteration's problem size, by keeping sharding strategies
 // that shard the same tensor dimensions as specified in the existing
 // HloSharding.
-// These two are distinguished by ShardingIsComplete().
+// These two are distinguished by spmd::ShardingIsComplete().
 void TrimOrGenerateStrategiesBasedOnExistingSharding(
     const Shape& output_shape, StrategyGroup* strategy_group,
     const StrategyMap& strategy_map,
@@ -1491,8 +1477,8 @@ void TrimOrGenerateStrategiesBasedOnExistingSharding(
     if (existing_sharding.IsUnknown()) {
       return;
     }
-    if (ShardingIsComplete(existing_sharding,
-                           cluster_env.device_mesh_.num_elements())) {
+    if (spmd::ShardingIsComplete(existing_sharding,
+                                 cluster_env.device_mesh_.num_elements())) {
       // Sharding provided by XLA users, we need to keep them.
       strategy_group->following = nullptr;
       std::vector<ShardingStrategy> new_strategies;
@@ -1598,7 +1584,7 @@ void TrimOrGenerateStrategiesBasedOnExistingSharding(
             (VectorGreaterThanOneElementCount(
                  strategy.output_sharding.tile_assignment().dimensions()) ==
                  1 &&
-             ShardingIsComplete(
+             spmd::ShardingIsComplete(
                  strategy.output_sharding,
                  cluster_env.original_device_mesh_.num_elements()))) {
           new_vector.push_back(std::move(strategy));
@@ -2018,6 +2004,7 @@ AutoShardingSolverResult CallSolver(
     request.add_instruction_names(
         absl::StrCat(instruction_name, " (id: ", node_idx, ")"));
     request.add_opcodes(std::string(opcode));
+    request.add_metadata_source_files(instruction->metadata().source_file());
     AutoShardingSolverRequest_Costs ci, di, mi, pi;
     AutoShardingSolverRequest_Names strategy_names;
     std::optional<HloSharding> default_strategy;
@@ -2182,7 +2169,7 @@ void CheckHloSharding(
       // TODO(yuemmawang) Check other cases when it's helpful (it's not
       // needed so far).
       double size = ByteSizeOfShape(ins->shape()) / 1024 / 1024 / 1024;
-      if ((!ShardingIsComplete(ins->sharding(), total_num_devices) ||
+      if ((!spmd::ShardingIsComplete(ins->sharding(), total_num_devices) ||
            ins->sharding().IsReplicated()) &&
           size > 1) {
         LOG(INFO) << "Instruction is not fully sharded: (" << size << " GB) "
@@ -3615,22 +3602,6 @@ bool HasReduceScatterOpportunity(const HloInstruction* inst,
 
 }  // namespace spmd
 
-bool IsInstructionBeforeSPMDFullToShardShapeCustomCall(
-    const HloInstruction* ins) {
-  if (ins->users().empty()) {
-    return false;
-  } else if (ins->users().size() == 1) {
-    return spmd::IsSPMDFullToShardShapeCustomCall(ins->users()[0]);
-  } else {
-    for (const HloInstruction* user : ins->users()) {
-      if (spmd::IsSPMDFullToShardShapeCustomCall(user)) {
-        return true;
-      }
-    }
-    return false;
-  }
-}
-
 std::pair<absl::flat_hash_map<std::string, std::vector<HloSharding>>, bool>
 AutoShardingImplementation::SaveAndRemoveShardingAnnotation(
     HloModule* module,
@@ -3653,7 +3624,7 @@ AutoShardingImplementation::SaveAndRemoveShardingAnnotation(
                                          preserve_shardings);
         continue;
       }
-      if (IsInstructionBeforeSPMDFullToShardShapeCustomCall(inst) ||
+      if (spmd::IsInstructionBeforeSPMDFullToShardShapeCustomCall(inst) ||
           spmd::IsSPMDShardToFullShapeCustomCall(inst)) {
         spmd::SaveShardingForInstruction(inst,
                                          /* save_for_copy_users */ false,
@@ -3722,7 +3693,7 @@ AutoShardingImplementation::SaveAndRemoveShardingAnnotation(
       if (ins->opcode() == HloOpcode::kOutfeed ||
           ins->opcode() == HloOpcode::kSend ||
           ins->opcode() == HloOpcode::kSendDone ||
-          IsInstructionBeforeSPMDFullToShardShapeCustomCall(ins) ||
+          spmd::IsInstructionBeforeSPMDFullToShardShapeCustomCall(ins) ||
           spmd::IsSPMDShardToFullShapeCustomCall(ins) ||
           !instructions_to_shard.contains(ins)) {
         continue;
@@ -3881,14 +3852,13 @@ absl::StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
   // shardings to their input ops.
   absl::flat_hash_map<const HloInstruction*, std::vector<int64_t>>
       unspecified_dims;
-  absl::StatusOr<bool> changed = ProcessShardingInstruction(
-      module, execution_threads, /*replace_sharding_with_copy=*/true,
-      &unspecified_dims, /*saved_root_shardings=*/nullptr,
-      /*saved_parameter_shardings=*/nullptr);
-  if (!changed.ok()) {
-    return changed.status();
-  }
-  if (changed.value()) {
+  TF_ASSIGN_OR_RETURN(
+      bool changed,
+      ProcessShardingInstruction(
+          module, execution_threads, /*replace_sharding_with_copy=*/true,
+          &unspecified_dims, /*saved_root_shardings=*/nullptr,
+          /*saved_parameter_shardings=*/nullptr));
+  if (changed) {
     module_is_changed = true;
     VLOG(3) << "CustomCalls with custom_call_target=Sharding are removed and "
                "their shardings are moved to their input ops.";
@@ -3913,7 +3883,9 @@ absl::StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
   // Handle donated args by resolving them into input-output aliases. While we
   // want to perform this resolution, we do not want to modify the module, which
   // is why we run the OptimizeInputOutputBufferAlias pass on a clone.
-  auto module_clone = module->Clone("");
+  std::unique_ptr<HloModule> module_clone = module->Clone("");
+  TF_RETURN_IF_ERROR(
+      spmd::EnsureEntryComputationLayoutHasShapeLayouts(module_clone.get()));
   OptimizeInputOutputBufferAlias input_output_buffer_alias_optimizer(
       /* registered_buffer_donor_only */ true);
   CHECK_OK(input_output_buffer_alias_optimizer.Run(module_clone.get()));
@@ -3986,34 +3958,26 @@ absl::StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
   CHECK_OK(module->entry_computation()->Accept(&hlo_cost_analysis));
   for (size_t mesh_idx = 0; mesh_idx < partial_mesh_shapes.size(); ++mesh_idx) {
     // Adjust existing shardings with current partial mesh shapes.
-    std::vector<int64_t> mesh_shape = partial_mesh_shapes[mesh_idx];
+    const std::vector<int64_t>& mesh_shape = partial_mesh_shapes[mesh_idx];
     LOG(INFO) << "Processing partial mesh shape: "
               << spmd::ToString(mesh_shape);
-    spmd::DeviceMesh device_mesh(mesh_shape);
 
-    int64_t total_devices = 1;
-    for (int64_t i : mesh_shape) {
-      total_devices *= i;
-    }
+    spmd::DeviceMesh device_mesh(mesh_shape);
     if (mesh_idx != partial_mesh_shapes.size() - 1) {
-      absl::StatusOr<bool> changed = spmd::AdjustShardingsWithPartialMeshShape(
-          sequence.instructions(), instructions_to_shard, mesh_shape,
-          total_devices,
-          /* crash_on_error */ !option_.try_multiple_mesh_shapes);
-      if (changed.ok()) {
-        LOG(INFO)
-            << "Shardings are adjusted based on current partial mesh shape: "
-            << *changed;
-      } else {
-        return changed.status();
-      }
-    }
-    if (option_.device_mesh_ids.size() == total_devices) {
+      device_mesh.FillIota(0);
+      TF_ASSIGN_OR_RETURN(
+          bool changed,
+          spmd::AdjustShardingsWithPartialMeshShape(
+              sequence.instructions(), instructions_to_shard, mesh_shape,
+              original_device_mesh,
+              /* crash_on_error */ !option_.try_multiple_mesh_shapes));
+      LOG(INFO)
+          << "Shardings are adjusted based on current partial mesh shape: "
+          << changed;
+    } else {
       // It is unclear what device order to use for partial meshes. So we only
       // use the actual device order only for the final full mesh.
       device_mesh.SetValues(option_.device_mesh_ids);
-    } else {
-      device_mesh.FillIota(0);
     }
 
     // TODO (zhuohan): Include the prof result as an option.
@@ -4082,12 +4046,9 @@ absl::StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
                              option_.try_multiple_mesh_shapes));
     spmd::AliasSet alias_set =
         spmd::BuildAliasSet(module, input_output_alias_config, strategy_map);
-    if (absl::Status alias_set_status = CheckAliasSetCompatibility(
-            alias_set, strategy_groups, sequence,
-            /* crash_at_error */ !option_.try_multiple_mesh_shapes);
-        !alias_set_status.ok()) {
-      return alias_set_status;
-    }
+    TF_RETURN_IF_ERROR(CheckAliasSetCompatibility(
+        alias_set, strategy_groups, sequence,
+        /* crash_at_error */ !option_.try_multiple_mesh_shapes));
     XLA_VLOG_LINES(8, PrintStrategyMap(strategy_map, sequence));
 
     // ----- Build cost graph and merge unimportant nodes -----
@@ -4268,22 +4229,6 @@ absl::StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
                            : AutoShardingResult::kModuleUnchanged;
 }
 
-bool ModuleHasUserShardings(const HloModule* module) {
-  bool has_shardings = false;
-  for (auto computation : module->computations()) {
-    for (auto instruction : computation->instructions()) {
-      if (instruction->has_sharding()) {
-        has_shardings = true;
-        break;
-      }
-    }
-    if (has_shardings) {
-      break;
-    }
-  }
-  return has_shardings;
-}
-
 bool ModuleIsManuallyPartitioned(const HloModule* module) {
   for (const HloComputation* computation : module->computations()) {
     for (const HloInstruction* instruction : computation->instructions()) {
@@ -4299,18 +4244,6 @@ bool ModuleIsManuallyPartitioned(const HloModule* module) {
 bool IsSmallTensor(const HloInstruction* ins,
                    const AutoShardingOption& option) {
   return spmd::ByteSizeOfShape(ins->shape()) <= option.small_tensor_byte_size;
-}
-
-bool ShardedOnTooManyMeshAxes(const HloModule& module) {
-  for (const auto* computation : module.computations()) {
-    for (const auto* instruction : computation->instructions()) {
-      if (instruction->has_sharding() && instruction->sharding().IsTiled() &&
-          spmd::NumTileDimensions(instruction->sharding()) >= 3) {
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 bool HasUnsupportedNestedTuples(const HloModule& module) {
@@ -4346,13 +4279,6 @@ absl::StatusOr<bool> AutoSharding::Run(
   }
   LOG(INFO) << "Starting the auto sharding pass";
 
-  if (ShardedOnTooManyMeshAxes(*module)) {
-    LOG(FATAL) << "The input module contains sharding annotations "  // Crash OK
-                  "over a mesh with too many axes (>2). This case is currently "
-                  "not well supported.";
-    return false;
-  }
-
   // TODO(b/332951306): Remove this check once nested tuples are supported
   // everywhere
   if (HasUnsupportedNestedTuples(*module)) {
@@ -4373,7 +4299,6 @@ absl::StatusOr<bool> AutoSharding::Run(
 #endif
 
   TF_RETURN_IF_ERROR(module->RemoveUnusedComputations());
-
   TF_RETURN_IF_ERROR(option_.CheckAndSetup());
   LOG(INFO) << "AutoShardingOptions:\n" << option_.ToString();
 
@@ -4411,21 +4336,10 @@ absl::StatusOr<bool> AutoSharding::Run(
 
   std::vector<std::vector<int64_t>> mesh_shapes;
   if (option_.try_multiple_mesh_shapes || module_is_manually_partitioned) {
-    bool asymmetrical_mesh_dims = false;
-    for (size_t i = 0; i < option_.device_mesh_shape.size(); ++i) {
-      if (option_.device_mesh_beta[0] != option_.device_mesh_beta[i] ||
-          option_.device_mesh_alpha[0] != option_.device_mesh_alpha[i]) {
-        asymmetrical_mesh_dims = true;
-        break;
-      }
-    }
-
     mesh_shapes = spmd::InferOrEnumerateMeshShapesToTry(
-        *module,
-        absl::c_accumulate(option_.device_mesh_shape, 1,
-                           [](int64_t a, int64_t b) { return a * b; }),
+        *module, Product(option_.device_mesh_shape),
         option_.device_mesh_shape.size(),
-        /* symmetrical_mesh_dims */ !asymmetrical_mesh_dims);
+        /*symmetrical_mesh_dims=*/false);
   } else {
     mesh_shapes.push_back(option_.device_mesh_shape);
   }

@@ -61,10 +61,9 @@ absl::Status GpuStream::Init() {
     return GpuDriver::GetGpuStreamPriority(
         parent_->gpu_context(), std::get<StreamPriority>(stream_priority_));
   }();
-  if (!GpuDriver::CreateStream(parent_->gpu_context(), &gpu_stream_,
-                               priority)) {
-    return absl::InternalError("Failed to CreateStream");
-  }
+  TF_ASSIGN_OR_RETURN(
+      gpu_stream_, GpuDriver::CreateStream(parent_->gpu_context(), priority));
+
   return absl::OkStatus();
 }
 
@@ -98,15 +97,11 @@ absl::Status GpuStream::MemZero(DeviceMemoryBase* location, uint64_t size) {
 
 absl::Status GpuStream::Memcpy(DeviceMemoryBase* gpu_dst,
                                const DeviceMemoryBase& gpu_src, uint64_t size) {
-  if (GpuDriver::AsynchronousMemcpyD2D(
-          parent_->gpu_context(),
-          reinterpret_cast<GpuDevicePtr>(const_cast<void*>(gpu_dst->opaque())),
-          reinterpret_cast<GpuDevicePtr>(const_cast<void*>(gpu_src.opaque())),
-          size, gpu_stream())) {
-    return absl::OkStatus();
-  }
-
-  return absl::InternalError("Failed to memcpy from device to device.");
+  return GpuDriver::AsynchronousMemcpyD2D(
+      parent_->gpu_context(),
+      reinterpret_cast<GpuDevicePtr>(const_cast<void*>(gpu_dst->opaque())),
+      reinterpret_cast<GpuDevicePtr>(const_cast<void*>(gpu_src.opaque())), size,
+      gpu_stream());
 }
 
 absl::Status GpuStream::Memcpy(DeviceMemoryBase* gpu_dst, const void* host_src,
@@ -186,7 +181,7 @@ GpuStream::~GpuStream() {
   }
 
   completed_event_.reset();
-  GpuDriver::DestroyStream(parent_->gpu_context(), &gpu_stream_);
+  GpuDriver::DestroyStream(parent_->gpu_context(), gpu_stream_);
 }
 
 void GpuStream::set_name(absl::string_view name) {
@@ -220,11 +215,6 @@ absl::Status GpuStream::Launch(const ThreadDim& thread_dims,
                                const Kernel& kernel, const KernelArgs& args) {
   const GpuKernel* gpu_kernel = AsGpuKernel(&kernel);
   GpuFunctionHandle function = gpu_kernel->gpu_function();
-
-  if (gpu_kernel->cache_config() != KernelCacheConfig::kNoPreference) {
-    TF_RETURN_IF_ERROR(GpuDriver::FuncSetCacheConfig(
-        function, gpu_kernel->GetGpuCacheConfig()));
-  }
 
   // Launch kernels with packed arguments.
   auto launch = [this, &kernel, &cluster_dims, &thread_dims, &block_dims,

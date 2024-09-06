@@ -60,7 +60,6 @@ ThunkExecutor::ThunkExecutor(ThunkSequence thunk_sequence,
       sink_.push_back(i);
     }
   }
-
   // Erase redundant edges between nodes.
   int64_t num_erased_edges = RunTransitiveReductionAndUpdatePriorities();
 
@@ -110,7 +109,7 @@ absl::StatusOr<ThunkExecutor> ThunkExecutor::Create(
     buffer_rwsets[i].AddAll(thunk.buffer_uses());
     resource_rwsets[i].AddAll(thunk.resource_uses());
 
-    for (NodeId j = i - 1; j >= 0; --j) {
+    for (NodeId j = 0; j < i; ++j) {
       // Check if node `i` must be executed after node `j`.
       if (buffer_rwsets[j].HasConflicts(buffer_rwsets[i]) ||
           resource_rwsets[j].HasConflicts(resource_rwsets[i])) {
@@ -118,6 +117,13 @@ absl::StatusOr<ThunkExecutor> ThunkExecutor::Create(
         defs[i].in_edges.push_back(j);
       }
     }
+  }
+
+  // Verify that both in-edges and out-edges are sorted in ascending order as we
+  // use this property later.
+  for (NodeId i = 0; i < defs.size(); ++i) {
+    DCHECK(absl::c_is_sorted(defs[i].out_edges));
+    DCHECK(absl::c_is_sorted(defs[i].in_edges));
   }
 
   return ThunkExecutor(std::move(thunk_sequence), std::move(defs), options);
@@ -162,12 +168,17 @@ tsl::AsyncValueRef<ThunkExecutor::ExecuteEvent> ThunkExecutor::Execute(
   // Create async execution state on heap and kick-off execution.
   auto state = std::make_unique<ExecuteState>(this, params.task_runner);
 
+  // When we kick-off execution we don't have to grab the session lock, as the
+  // main thread is not counted towards the number of concurrent workers limit.
+  // This also works for thunks with nested thunk executors (i.e., WhileThunk),
+  // as launching nested thunk sequence must not reduce the available
+  // concurrency for the other thunks executing in parallel.
   if (options_.use_priority_ready_queue) {
     Execute(state.get(), params, PriorityReadyQueue(nodes_defs_, source_),
-            /*lock=*/params.session.Join());
+            /*lock=*/nullptr);
   } else {
     Execute(state.get(), params, FifoReadyQueue(source_),
-            /*lock=*/params.session.Join());
+            /*lock=*/nullptr);
   }
 
   // If execution already completed (all kernels executed in the caller thread),
@@ -272,12 +283,16 @@ void ThunkExecutor::Execute(ExecuteState* state,
 
   tsl::profiler::TraceMe trace("ThunkExecutor::Execute");
   bool has_runner = state->runner != nullptr;
+  bool has_lock = static_cast<bool>(lock);
 
   // Threshold for splitting ready queue into separate thunk executor tasks.
   int64_t split_threshold = params.session.split_threshold();
 
   while (!ready_queue.Empty()) {
-    DCHECK(lock) << "Execute session lock must be held";
+    // If we had and execution lock passed to us by the caller, we must not
+    // lose it in the middle of the loop (donate to one of the callbacks).
+    DCHECK_EQ(static_cast<bool>(lock), has_lock)
+        << "Execute session lock must not be lost in the middle of the loop";
 
     NodeId id = ready_queue.Pop();
     ExecuteState::Node& node = state->node(id);
@@ -314,7 +329,8 @@ void ThunkExecutor::Execute(ExecuteState* state,
       // lock to the callback, because having a pending execute event means
       // that we have at least one more thread that is processing the same
       // execute session. If we happen to process the last thunk in the ready
-      // queue, we will forward the lock that we already hold.
+      // queue, we will forward the lock that we already hold (note that the
+      // lock might be empty, if `Execute` was called by the main thread).
       execute_event.AndThen(
           [&params, &node, state, execute_event = execute_event.AsPtr(),
            ready_queue = ready_queue.CreateEmptyReadyQueue(),
@@ -414,27 +430,51 @@ void ThunkExecutor::ProcessOutEdges(
   }
 }
 
-// Erases edge from `from` node to `to` node if it exists.
-//
-// TODO(ezhulenev): Out and In-edges are sorted in increasing and decreasing
-// order respectively. We can use binary search to speed up this function.
+// Erases edge from `from` node to `to` node if it exists. We rely on the fact
+// that out and in-edges are sorted and use binary search on a critical path.
 static int64_t EraseEdge(ThunkExecutor::NodeDef& from,
                          ThunkExecutor::NodeDef& to) {
-  auto out_edge_it = absl::c_find(from.out_edges, to.id);
-  auto in_edge_it = absl::c_find(to.in_edges, from.id);
+  DCHECK_NE(from.id, to.id) << "Nodes must be different";
+  DCHECK_LT(from.id, to.id) << "Nodes must be ordered";
 
-  bool has_out_edge = out_edge_it != from.out_edges.end();
-  bool has_in_edge = in_edge_it != to.in_edges.end();
-
-  DCHECK_EQ(has_out_edge, has_in_edge) << "Edges must be symmetric";
-
-  if (has_out_edge && has_in_edge) {
-    from.out_edges.erase(out_edge_it);
-    to.in_edges.erase(in_edge_it);
-    return 1;
+  // Short-circuit if out or in-edges are empty.
+  if (from.out_edges.empty() || to.in_edges.empty()) {
+    DCHECK_EQ(absl::c_count(from.out_edges, to.id), 0) << "Unexpected out edge";
+    DCHECK_EQ(absl::c_count(to.in_edges, from.id), 0) << "Unexpected in edge";
+    return 0;
   }
 
-  return 0;
+  // Short-circuit if out-edges or in-edges don't intersect with `to` or `from`
+  // node ids (remember that edges are sorted).
+  if (from.out_edges.back() < to.id || to.in_edges.front() > from.id) {
+    DCHECK_EQ(absl::c_count(from.out_edges, to.id), 0) << "Unexpected out edge";
+    DCHECK_EQ(absl::c_count(to.in_edges, from.id), 0) << "Unexpected in edge";
+    return 0;
+  }
+
+  // Check if `from` node has an out edge to `to` node.
+  auto out_edges_it = absl::c_lower_bound(from.out_edges, to.id);
+  bool has_out_edge =
+      out_edges_it != from.out_edges.end() && *out_edges_it == to.id;
+
+  // Short-circuit if there is no out edge from `from` node to `to` node.
+  if (!has_out_edge) {
+    DCHECK_EQ(absl::c_count(to.in_edges, from.id), 0) << "Unexpected in edge";
+    return 0;
+  }
+
+  // Check if `to` node has an in edge from `from` node.
+  auto in_edges_it = absl::c_lower_bound(to.in_edges, from.id);
+  bool has_in_edge =
+      in_edges_it != to.in_edges.end() && *in_edges_it == from.id;
+
+  DCHECK(has_in_edge) << "In-edge must exist if out-edge exists";
+
+  from.out_edges.erase(out_edges_it);
+  to.in_edges.erase(in_edges_it);
+
+  // We erased one edge between `from` and `to` nodes.
+  return 1;
 }
 
 int64_t ThunkExecutor::RunTransitiveReductionAndUpdatePriorities() {
@@ -452,8 +492,9 @@ int64_t ThunkExecutor::RunTransitiveReductionAndUpdatePriorities() {
   };
 
   // For each node we do a DFS traversal and delete redundant edges that
-  // connect source node with the node reachable via DFS.
-  for (int64_t i = 0; i < nodes_defs_.size(); ++i) {
+  // connect source node with the node reachable via DFS. We do traversal in
+  // reverse order as we end up traversing fewer edges this way.
+  for (int64_t i = nodes_defs_.size() - 1; i >= 0; --i) {
     NodeDef& source_node = nodes_defs_[i];
 
     // Clear DFS workspace from previous iteration.

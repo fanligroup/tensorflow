@@ -22,7 +22,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "mlir/Pass/Pass.h"  // from @llvm-project
 #include "mlir/Pass/PassRegistry.h"  // from @llvm-project  // IWYU pragma: keep
-#include "tensorflow/compiler/mlir/lite/transforms/optimize.h"
+#include "tensorflow/compiler/mlir/lite/transforms/optimize_pass.h"
 #include "tensorflow/compiler/mlir/quantization/common/quantization_lib/quantization_config.h"
 
 namespace mlir {
@@ -244,6 +244,9 @@ std::unique_ptr<OperationPass<ModuleOp>> CreateReduceTypePrecisionPass();
 // so redudant ones may be grouped and removed.
 std::unique_ptr<OperationPass<ModuleOp>> CreatePushTransposeThroughEwisePass();
 
+// Create a pass that canonicalize the boundary values.
+std::unique_ptr<OperationPass<ModuleOp>> CreateCanonicalizeBoundaryValuePass();
+
 // Creates a pass that brings operations into the same order as graph_info.cc.
 std::unique_ptr<OperationPass<func::FuncOp>>
 CreatePartitionedTopologicalSortPass();
@@ -292,8 +295,13 @@ std::unique_ptr<OperationPass<func::FuncOp>> CreateDefaultQuantParamsPass(
     const DefaultQuantParamsPassOptions& options);
 
 inline void registerOptimizePass() {
-  mlir::registerPass(
-      []() -> std::unique_ptr<::mlir::Pass> { return CreateOptimizePass(); });
+  auto pass_argument = OptimizePass::GetArgument();
+  auto pass_description = OptimizePass::GetDescription();
+  PassPipelineRegistration<OptimizePassOptions>(
+      pass_argument, pass_description,
+      [](OpPassManager& pm, const OptimizePassOptions& options) {
+        pm.addPass(CreateOptimizePass(options));
+      });
 }
 
 inline void registerTensorFlowLitePasses() {

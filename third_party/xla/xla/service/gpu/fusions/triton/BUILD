@@ -7,6 +7,7 @@ load(
     "if_gpu_is_configured",
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tsl:tsl.bzl", "if_google")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -72,7 +73,7 @@ cc_library(
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:launch_dim",
-        "//xla/translate/hlo_to_mhlo:hlo_module_importer",
+        "//xla/translate/hlo_to_mhlo:hlo_function_importer",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -201,8 +202,7 @@ xla_test(
     ],
     shard_count = 20,
     tags = [
-        "no_rocm",
-        "nomac",
+        "no_mac",
     ],
     deps = [
         ":triton_fusion_emitter",
@@ -252,8 +252,7 @@ xla_test(
         "gpu_amd_any",
     ],
     tags = [
-        "no_rocm",
-        "nomac",
+        "no_mac",
     ],
     deps = [
         ":triton_fusion_emitter",
@@ -302,7 +301,6 @@ cc_library(
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu/model:tiled_hlo_instruction_or_computation",
-        "//xla/service/gpu/model:triton_emitter_constraints",
         "//xla/stream_executor:device_description",
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
@@ -328,6 +326,7 @@ xla_cc_test(
     deps = [
         ":triton_fusion_emitter",
         "//xla/hlo/ir:hlo",
+        "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu:hlo_traversal",
         "//xla/service/gpu/model:symbolic_tile_analysis",
         "//xla/service/gpu/model:tiled_hlo_instruction_or_computation",
@@ -361,11 +360,12 @@ xla_test(
     ],
     tags = [
         "large",
+        "no_mac",
         "no_oss",  # requires-mem:16g tag doesn't work in open source
-        "nomac",
         "nozapfhahn",  # Times out under coverage
+    ] + if_google([
         "requires-mem:16g",
-    ],
+    ]),
     deps = [
         "//xla:error_spec",
         "//xla:xla_proto_cc",
@@ -386,7 +386,7 @@ xla_test(
         "gpu_amd_any",
     ],
     shard_count = 10,
-    tags = ["nomac"],
+    tags = ["no_mac"],
     deps = [
         ":triton_support",
         "//xla:comparison_util",
@@ -452,7 +452,6 @@ xla_cc_test(
         "//xla/service/gpu/model:tiled_hlo_instruction_or_computation",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
@@ -472,7 +471,7 @@ xla_test(
         "gpu_h100",
         "gpu_amd_any",
     ],
-    tags = ["nomac"],
+    tags = ["no_mac"],
     deps = [
         ":triton_fusion_emitter",
         ":triton_support",

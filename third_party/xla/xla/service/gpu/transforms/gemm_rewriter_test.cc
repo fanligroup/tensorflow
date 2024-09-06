@@ -101,7 +101,7 @@ class GemmRewriteTest : public GpuCodegenTest {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     // These tests test the cuBLAS rewriter so we have to make sure that we use
     // cuBLAS for them.
-    debug_options.set_xla_gpu_unsupported_enable_triton_gemm(false);
+    debug_options.set_xla_gpu_enable_triton_gemm(false);
     debug_options.set_xla_gpu_gemm_rewrite_size_threshold(0);
     return debug_options;
   }
@@ -296,7 +296,7 @@ class ParameterizedGemmRewriteTest
   DebugOptions GetDebugOptionsForTest() override {
     DebugOptions debug_options = GemmRewriteTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_cublaslt(GetParam());
-    debug_options.set_xla_gpu_unsupported_enable_triton_gemm(false);
+    debug_options.set_xla_gpu_enable_triton_gemm(false);
     return debug_options;
   }
   void MatchOptimizedHlo(absl::string_view hlo, const absl::string_view pattern,
@@ -1455,7 +1455,7 @@ class LegacyCublasGemmRewriteTest : public GemmRewriteTest {
  public:
   DebugOptions GetDebugOptionsForTest() override {
     DebugOptions debug_options = GemmRewriteTest::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_unsupported_enable_triton_gemm(false);
+    debug_options.set_xla_gpu_enable_triton_gemm(false);
     debug_options.set_xla_gpu_enable_cublaslt(false);
     return debug_options;
   }
@@ -2057,6 +2057,12 @@ ENTRY test {
 
 // Test batch gemm matrix bias add fusion with mix type that is not supported.
 TEST_F(LegacyCublasGemmRewriteTest, MatrixBiasMixTypeNotSupported) {
+  if (IsCuda() &&
+      !HasCudaComputeCapability(se::CudaComputeCapability::Ampere())) {
+    GTEST_SKIP()
+        << "Pre-Ampere rewrites to cutlass_gemm_with_upcast instead of cublas.";
+  }
+
   const char* hlo_text = R"(
 HloModule test
 
@@ -2210,7 +2216,7 @@ class CublasLtGemmRewriteTest : public GemmRewriteTest {
   DebugOptions GetDebugOptionsForTest() override {
     DebugOptions debug_options = GemmRewriteTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_cublaslt(true);
-    debug_options.set_xla_gpu_unsupported_enable_triton_gemm(false);
+    debug_options.set_xla_gpu_enable_triton_gemm(false);
     return debug_options;
   }
 
@@ -4216,6 +4222,12 @@ ENTRY test {
 // For bfloat16, the operands are padded if necessary on Ampere and newer
 // architectures so that the sizes of all dimensions are multiples of 8.
 TEST_F(CublasLtGemmRewriteTest, VectorBiasBF16Unpadded) {
+  if (IsCuda() &&
+      !HasCudaComputeCapability(se::CudaComputeCapability::Ampere())) {
+    GTEST_SKIP()
+        << "Pre-Ampere rewrites to cutlass_gemm_with_upcast instead of cublas.";
+  }
+
   const char* hlo_text = R"(
 HloModule test
 
@@ -4265,6 +4277,12 @@ ENTRY test {
 // For bfloat16, the operands are padded if necessary on Ampere and newer
 // architectures so that the sizes of all dimensions are multiples of 8.
 TEST_F(CublasLtGemmRewriteTest, ReluActivationBF16Unpadded) {
+  if (IsCuda() &&
+      !HasCudaComputeCapability(se::CudaComputeCapability::Ampere())) {
+    GTEST_SKIP()
+        << "Pre-Ampere rewrites to cutlass_gemm_with_upcast instead of cublas.";
+  }
+
   const char* hlo_text = R"(
 HloModule test
 
@@ -4315,6 +4333,12 @@ ENTRY test {
 // For bfloat16, the operands are padded if necessary on Ampere and newer
 // architectures so that the sizes of all dimensions are multiples of 8.
 TEST_F(CublasLtGemmRewriteTest, VectorBiasReluActivationBF16Unpadded) {
+  if (IsCuda() &&
+      !HasCudaComputeCapability(se::CudaComputeCapability::Ampere())) {
+    GTEST_SKIP()
+        << "Pre-Ampere rewrites to cutlass_gemm_with_upcast instead of cublas.";
+  }
+
   const char* hlo_text = R"(
 HloModule test
 
@@ -4835,8 +4859,11 @@ ENTRY main {
 }
 
 TEST_P(ParameterizedFp8GemmRewriteTest, DoNotRewriteToF8OnPreAda) {
+  if (!IsCuda()) {
+    GTEST_SKIP() << "FP8 Rewrite pattern is different on ROCM-6.2 ";
+  }
   if (HasFp8Support()) {
-    GTEST_SKIP() << "Test requires a pre-Ada GPU or an AMD GPU prior to MI300.";
+    GTEST_SKIP() << "Test requires a pre-Ada GPU";
   }
   const char* hlo_text = R"(
     HloModule test
@@ -8319,8 +8346,13 @@ ENTRY test {
 }
 )";
   // Large lhs is fine for cuBLASlt.
-  MatchOptimizedHlo(hlo_text,
-                    R"(; CHECK: custom_call_target="__cublas$lt$matmul")");
+  if (IsCuda()) {
+    MatchOptimizedHlo(hlo_text,
+                      R"(; CHECK: custom_call_target="__cublas$lt$matmul")");
+  } else {
+    MatchOptimizedHlo(hlo_text,
+                      R"(; CHECK: custom_call_target="__cublas$gemm")");
+  }
 }
 
 TEST_F(CublasLtGemmRewriteTest, CublasLtOnlyMatchesLargeC64RhsPostAmpere) {
@@ -8371,6 +8403,7 @@ class GemmRewriteAllocationTest : public GpuCodegenTest {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     // Make sure the rewriter does not skip the rewrite for being too small.
     debug_options.set_xla_gpu_gemm_rewrite_size_threshold(0);
+    debug_options.set_xla_gpu_enable_triton_gemm(false);
     return debug_options;
   }
 

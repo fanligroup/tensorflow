@@ -242,13 +242,7 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForInstruction(
     const HloInstruction* producer) {
   // Stand-alone bitcast is always no-op during runtime.
   if (producer->opcode() == HloOpcode::kBitcast) {
-    return EstimateRunTimeData{/*flops=*/0,
-                               /*bytes_read=*/0,
-                               /*bytes_written=*/0,
-                               /*read_time=*/absl::ZeroDuration(),
-                               /*write_time=*/absl::ZeroDuration(),
-                               /*compute_time=*/absl::ZeroDuration(),
-                               /*exec_time=*/absl::ZeroDuration()};
+    return EstimateRunTimeData::Zero();
   }
 
   auto fusion_analysis = HloFusionAnalysis::Create(*producer, *device_info_);
@@ -372,7 +366,7 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledFusion(
   SymbolicTileAnalysisOrError analysis_or_error =
       SymbolicTileAnalysis::AnalyzeFusion(
           fusion_adaptor, mlir_context_,
-          TritonEmitterConstraints::GetBuilder());
+          /*emitter_specific_constraints_builder=*/nullptr);
   if (const auto* fusion_decision =
           std::get_if<FusionDecision>(&analysis_or_error)) {
     return absl::FailedPreconditionError(absl::StrCat(
@@ -434,7 +428,7 @@ GpuPerformanceModelWithIndexingAnalysis::TryFindBestTilingForFusion(
   SymbolicTileAnalysisOrError analysis_or_error =
       SymbolicTileAnalysis::AnalyzeFusion(
           fusion_adaptor, mlir_context_,
-          TritonEmitterConstraints::GetBuilder());
+          TritonEmitterConstraints::GetBuilder(*device_info_));
 
   if (const auto* fusion_decision =
           std::get_if<FusionDecision>(&analysis_or_error)) {

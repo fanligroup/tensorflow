@@ -60,6 +60,7 @@ cc_library(
         "@local_tsl//tsl/platform:macros",
         "@local_tsl//tsl/platform:status",
         "@local_tsl//tsl/protobuf:coordination_config_proto_cc",
+        "@local_tsl//tsl/protobuf:coordination_service_proto_cc",
     ],
 )
 
@@ -100,7 +101,6 @@ tf_proto_library(
     name = "test_device_proto",
     testonly = 1,
     srcs = ["test_device.proto"],
-    cc_api_version = 2,
 )
 
 tsl_cc_test(

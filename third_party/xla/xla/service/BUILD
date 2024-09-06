@@ -49,7 +49,6 @@ package_group(
 tf_proto_library(
     name = "hlo_proto",
     srcs = ["hlo.proto"],
-    cc_api_version = 2,
     make_default_target_header_only = True,
     protodeps = [
         "//xla:xla_data_proto",
@@ -67,20 +66,17 @@ tf_pyclif_proto_library(
 tf_proto_library(
     name = "hlo_profile_printer_data",
     srcs = ["hlo_profile_printer_data.proto"],
-    cc_api_version = 2,
 )
 
 tf_proto_library(
     name = "hlo_execution_profile_data",
     srcs = ["hlo_execution_profile_data.proto"],
-    cc_api_version = 2,
     protodeps = [":hlo_profile_printer_data"],
 )
 
 tf_proto_library(
     name = "metrics_proto",
     srcs = ["metrics.proto"],
-    cc_api_version = 2,
     protodeps = if_google([
         "@com_google_protobuf//:any",
         "@com_google_protobuf//:duration",
@@ -123,6 +119,7 @@ cc_library(
         ":hlo_pass",
         ":shape_inference",
         "//xla:frontend_attributes",
+        "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -827,6 +824,7 @@ cc_library(
     deps = [
         ":hlo_pass",
         "//xla/hlo/ir:hlo",
+        "//xla/service/spmd/shardy:constants",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@local_tsl//tsl/platform:errors",
@@ -1240,17 +1238,17 @@ xla_cc_test(
     deps = [
         ":call_graph",
         ":flatten_call_graph",
-        "//xla:literal",
+        "//xla:comparison_util",
+        "//xla:literal_util",
         "//xla:shape_util",
-        "//xla:status_macros",
         "//xla:test",
-        "//xla:test_helpers",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
-        "//xla/tsl/lib/core:status_test_util",
+        "@com_google_absl//absl/status:statusor",
+        "@local_tsl//tsl/platform:statusor",
     ],
 )
 
@@ -1744,9 +1742,6 @@ cc_library(
 xla_test(
     name = "compiler_test",
     srcs = ["compiler_test.cc"],
-    backend_tags = {
-        "gpu": if_google(["requires-gpu-nvidia"]),
-    },
     backends = [
         "gpu",
         "cpu",
@@ -3542,7 +3537,7 @@ cc_library(
 xla_cc_test(
     name = "hlo_unstacker_test",
     srcs = ["hlo_unstacker_test.cc"],
-    tags = ["requires-net:external"],
+    tags = if_google(["requires-net:external"]),
     deps = [
         ":hlo_unstacker",
         "//xla/hlo/ir:hlo",
@@ -5268,6 +5263,8 @@ cc_library(
         ":hlo_verifier",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
         "@local_tsl//tsl/platform:errors",
@@ -6472,6 +6469,7 @@ cc_library(
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -6500,6 +6498,7 @@ xla_cc_test(
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
+        "//xla/tests:verified_hlo_module",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -7674,7 +7673,6 @@ py_strict_test(
     python_version = "PY3",
     tags = [
         "no_oss",
-        "nopip",
     ],
     deps = [
         ":generate_test_hlo_checks",
@@ -7811,7 +7809,6 @@ tf_proto_library(
     name = "test_compilation_environment_proto",
     testonly = 1,
     srcs = ["test_compilation_environment.proto"],
-    cc_api_version = 2,
 )
 
 xla_cc_test(
@@ -8346,7 +8343,6 @@ xla_cc_test(
 tf_proto_library(
     name = "buffer_assignment_proto",
     srcs = ["buffer_assignment.proto"],
-    cc_api_version = 2,
     make_default_target_header_only = True,
 )
 
@@ -8480,6 +8476,18 @@ xla_cc_test(
         "@local_tsl//tsl/platform:statusor",
         "@local_tsl//tsl/platform:test",
         "@local_tsl//tsl/platform:test_main",
+    ],
+)
+
+xla_cc_test(
+    name = "propagate_original_value_test",
+    srcs = ["propagate_original_value_test.cc"],
+    deps = [
+        ":instruction_fusion",
+        "//xla:xla_data_proto_cc",
+        "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

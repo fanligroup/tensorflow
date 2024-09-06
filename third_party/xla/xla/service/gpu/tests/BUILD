@@ -20,7 +20,7 @@ load(
 )
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_oss")
+load("//xla/tsl:tsl.bzl", "if_google", "if_oss")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 
 package(
@@ -118,7 +118,7 @@ xla_cc_test(
     name = "async_kernel_launch_test",
     srcs = ["async_kernel_launch_test.cc"],
     # "requires-net:external" tag allows uploading `xprof` results.
-    tags = ["requires-net:external"] + tf_cuda_tests_tags(),
+    tags = if_google(["requires-net:external"]) + tf_cuda_tests_tags(),
     deps = [
         "//xla:debug_options_flags",
         "//xla:literal",
@@ -486,6 +486,7 @@ xla_test(
         "//xla/service/gpu:gpu_fusible",
         "//xla/service/gpu/transforms:instruction_fusion",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:test_main",
     ],
 )
@@ -621,7 +622,6 @@ lit_test_suite(
         [
             "add_preds.hlo",
             "calling_convention.hlo",
-            "copy.hlo",
             "dot_bf16.hlo",
             "dynamic_update_slice_inplace.hlo",
             "fused_scatter.hlo",
@@ -645,6 +645,7 @@ lit_test_suite(
             "sorting.hlo",
             "transpose_021.hlo",
             "transpose_021_extra_output.hlo",
+            "transpose_10.hlo",
             "transpose_210.hlo",
             "transpose_210_extra_output.hlo",
             "triton_naming.hlo",
@@ -827,11 +828,9 @@ xla_test(
 xla_test(
     name = "gpu_fused_mha_test",
     srcs = ["gpu_fused_mha_test.cc"],
-    backend_tags = {"gpu": [
-        "requires-gpu-sm80",
-    ]},
     backends = [
-        "gpu",
+        "gpu_a100",
+        "gpu_h100",
     ],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     shard_count = 2,

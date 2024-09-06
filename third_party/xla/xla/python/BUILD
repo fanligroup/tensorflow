@@ -890,7 +890,6 @@ py_strict_test(
 tf_proto_library(
     name = "pytree_proto",
     srcs = ["pytree.proto"],
-    cc_api_version = 2,
     visibility = ["//visibility:public"],
 )
 
@@ -950,6 +949,7 @@ cc_library(
         "@llvm-project//mlir:SparseTensorDialect",
         "@llvm-project//mlir:Support",
         "@nanobind",
+        "@shardy//shardy/dialect/sdy/ir:dialect",
         "@stablehlo//:chlo_ops",
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_serialization",
@@ -960,7 +960,9 @@ cc_library(
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:status_casters",
         "//xla/service/llvm_ir:llvm_util",
+        "//xla/service/spmd/shardy/sdy_round_trip:pipelines",
         "//xla/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
+        "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
         "@local_tsl//tsl/platform:errors",
         "@local_tsl//tsl/platform:logging",
         "@local_tsl//tsl/platform:statusor",
@@ -1183,7 +1185,6 @@ cc_library(
 tf_proto_library(
     name = "py_host_callback_proto",
     srcs = ["py_host_callback.proto"],
-    cc_api_version = 2,
 )
 
 # If this flag is enabled, it sets RPATH on the xla_extension to values that are suitable for

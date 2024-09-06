@@ -28,16 +28,122 @@ def ShapeToConst : NativeCodeCall<"ShapeToConst($_builder, $0)">;
 def CreateTFLCastToInt32Op : NativeCodeCall<
   "CreateCastToInt32($0, $_loc, $_builder)">;
 
-def LegalizeTranspose : Pat<(MHLO_TransposeOp $arg, $perm),
-                            (TFL_TransposeOp $arg,
-                            (CreateTFLCastToInt32Op (TFL_ConstOp $perm)))>;
+def : Pat<
+  (MHLO_ConstantOp:$output $value),
+  (Arith_ConstantOp $value),
+  [(TFL_TensorOf<[AnyType]> $output)]>;
 
-def LegalizeReshape : Pat<(MHLO_ReshapeOp:$output $input),
-          (TFL_ReshapeOp $input,
-            (CreateTFLCastToInt32Op (ShapeToConst $output)))>;
 
-def LegalizeDynamicReshape : Pat<(MHLO_DynamicReshapeOp $input, $shape),
-          (TFL_ReshapeOp $input, (CreateTFLCastToInt32Op $shape))>;
+//===----------------------------------------------------------------------===//
+// data movement
+//===----------------------------------------------------------------------===//
+
+def : Pat<
+  (MHLO_TransposeOp $arg, $perm),
+  (TFL_TransposeOp $arg,
+    (CreateTFLCastToInt32Op
+      (TFL_ConstOp $perm)))>;
+
+def : Pat<
+  (MHLO_ReverseOp $input, $dims),
+  (TFL_ReverseV2Op $input,
+    (CreateTFLCastToInt32Op
+      (Arith_ConstantOp $dims)))>;
+
+def I64AttrToI32Attr:
+  NativeCodeCall<
+    "$_builder.getI32IntegerAttr("
+      "static_cast<int32_t>($0.cast<IntegerAttr>().getInt()))">;
+
+def : Pat<
+  (MHLO_ConcatenateOp $inputs, $dim),
+  (TFL_ConcatenationOp
+    $inputs,
+    (I64AttrToI32Attr $dim),
+    TFL_AF_None)>;
+
+//
+// Reshapes
+//
+
+def : Pat<
+  (MHLO_ReshapeOp:$output $input),
+  (TFL_ReshapeOp $input,
+    (CreateTFLCastToInt32Op
+      (ShapeToConst $output)))>;
+
+def : Pat<
+  (MHLO_DynamicReshapeOp $input, $shape),
+  (TFL_ReshapeOp $input,
+    (CreateTFLCastToInt32Op $shape))>;
+
+//
+// Broadcasts
+//
+
+def IsTFLStyleBroadcast :
+  Constraint<CPred<"IsTFLStyleBroadcast($0, $1)">>;
+
+def IsNotTFLStyleBroadcast :
+  Constraint<Neg<IsTFLStyleBroadcast.predicate>>;
+
+def ExpandedShape :
+  NativeCodeCall<"ExpandedShape($_builder, $0, $1, $2)">;
+
+def ExpandedDynamicShape :
+  NativeCodeCall<"ExpandedDynamicShape($_builder, $0, $1, $2)">;
+
+def : Pat<
+  (MHLO_BroadcastInDimOp:$output
+    $input,
+    $broadcast_dimensions),
+  (TFL_BroadcastToOp
+    $input,
+    (ShapeToConst $output)),
+  [(IsTFLStyleBroadcast $broadcast_dimensions, $output)]>;
+
+def : Pat<
+  (MHLO_BroadcastInDimOp:$output
+    $input,
+    $broadcast_dimensions),
+  (TFL_BroadcastToOp
+    (TFL_ReshapeOp
+        $input,
+        (ExpandedShape
+          $input,
+          $broadcast_dimensions,
+          $output)),
+    (ShapeToConst $output)),
+  [(IsNotTFLStyleBroadcast $broadcast_dimensions, $output)]>;
+
+def : Pat<
+  (MHLO_DynamicBroadcastInDimOp:$output
+    $input,
+    $output_dimensions,
+    $broadcast_dimensions,
+    $expanding_dimensions_unused,
+    $nonexpanding_dimensions_unused),
+  (TFL_BroadcastToOp
+    $input,
+    $output_dimensions),
+  [(IsTFLStyleBroadcast $broadcast_dimensions, $output)]>;
+
+def : Pat<
+  (MHLO_DynamicBroadcastInDimOp:$output
+    $input,
+    $output_dimensions,
+    $broadcast_dimensions,
+    $expanding_dimensions_unused,
+    $nonexpanding_dimensions_unused),
+  (TFL_BroadcastToOp
+    (ExpandedDynamicShape
+      $input,
+      $broadcast_dimensions,
+      $output),
+    $output_dimensions),
+  [(IsNotTFLStyleBroadcast $broadcast_dimensions, $output)]>;
+
+
 
 //===----------------------------------------------------------------------===//
 // logical and bitwise ops
@@ -114,6 +220,10 @@ def : Pat<
   (TFL_RightShiftOp $l, $r)>;
 
 def : Pat<
+  (MHLO_Atan2Op $l, $r),
+  (TFL_Atan2Op $l, $r)>;
+
+def : Pat<
   (MHLO_RemOp $l, $r),
   (TFL_FloorModOp $l, $r)>;
 
@@ -125,18 +235,55 @@ foreach pair = [
 ] in {
   def : Pat<
     (pair[0] $l, $r),
-    (pair[1] $l, $r)>;
+    (pair[1] $l, $r)>; 
+
+  def : Pat<
+    (pair[0] 
+      (MHLO_BroadcastInDimOp:$output
+        $bcast_operand,
+        $broadcast_dimensions),
+      $r),
+    (pair[1] $bcast_operand, $r),
+    [(IsTFLStyleBroadcast $broadcast_dimensions, $output)]>; 
+
+  def : Pat<
+    (pair[0] 
+      $l,
+      (MHLO_BroadcastInDimOp:$output
+        $bcast_operand,
+        $broadcast_dimensions)),
+    (pair[1] $l, $bcast_operand),
+    [(IsTFLStyleBroadcast $broadcast_dimensions, $output)]>; 
 }
 
 // Binary ops with fused activiation attr.
 foreach pair = [
   [MHLO_DivOp, TFL_DivOp],
+  [MHLO_AddOp, TFL_AddOp],
   [MHLO_MulOp, TFL_MulOp],
   [MHLO_SubtractOp, TFL_SubOp],
 ] in {
   def : Pat<
     (pair[0] $l, $r),
     (pair[1] $l, $r, TFL_AF_None)>;
+
+  def : Pat<
+    (pair[0] 
+      (MHLO_BroadcastInDimOp:$output
+        $bcast_operand,
+        $broadcast_dimensions),
+      $r),
+    (pair[1] $bcast_operand, $r, TFL_AF_None),
+    [(IsTFLStyleBroadcast $broadcast_dimensions, $output)]>; 
+
+  def : Pat<
+    (pair[0] 
+      $l,
+      (MHLO_BroadcastInDimOp:$output
+        $bcast_operand,
+        $broadcast_dimensions)),
+    (pair[1] $l, $bcast_operand, TFL_AF_None),
+    [(IsTFLStyleBroadcast $broadcast_dimensions, $output)]>; 
 }
 
 
@@ -256,6 +403,9 @@ def TensorIsSign :
 def ValueGreaterThanZero :
   Constraint<CPred<"ValueGreaterThanZero($0)">>;
 
+def : Pat<
+  (MHLO_RoundNearestEvenOp $input),
+  (TFL_RoundOp $input)>;
 
 // Converts a dag of HLOs representing banker rounding (round x.5 to nearest
 // even) to tfl.round. This only supports float types because mhlo.floor only

@@ -217,8 +217,10 @@ cc_library(
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
+        "@local_tsl//tsl/platform:errors",
         "@local_tsl//tsl/platform:logging",
         "@local_tsl//tsl/platform:test",
     ],
@@ -738,6 +740,7 @@ xla_test(
         "//xla/client:global_data",
         "//xla/client:local_client",
         "//xla/client:xla_builder",
+        "//xla/client/lib:math",
         "@local_tsl//tsl/platform:test",
     ],
 )
@@ -1183,7 +1186,6 @@ CONVOLUTION_TEST_DEPS = [
     "//xla/client:local_client",
     "//xla/client:padding",
     "//xla/client:xla_builder",
-    "//xla/service/gpu:gpu_executable",
     "//xla/tests:client_library_test_base",
     "//xla/tests:hlo_test_base",
     "//xla/tests:literal_test_util",
@@ -1480,6 +1482,7 @@ xla_test(
         ":xla_internal_test_main",
         "//xla:test",
         "//xla/client:xla_builder",
+        "@com_google_googletest//:gtest_main",
         "@local_tsl//tsl/platform:ml_dtypes",
     ],
 )
@@ -1745,23 +1748,21 @@ xla_test(
     srcs = ["select_and_scatter_test.cc"],
     shard_count = 25,
     tags = [
-        "nomac",  # b/194731834
+        "no_mac",  # b/194731834
         "nozapfhahn",
         "optonly",
         "test_xla_cpu_thunks",
     ],
     deps = [
         ":client_library_test_base",
-        ":literal_test_util",
         ":test_macros_header",
         ":xla_internal_test_main",
+        "//xla:array",
         "//xla:array2d",
-        "//xla:literal",
+        "//xla:array4d",
+        "//xla:error_spec",
         "//xla:reference_util",
-        "//xla:shape_util",
-        "//xla:status_macros",
         "//xla:xla_data_proto_cc",
-        "//xla/client:local_client",
         "//xla/client:padding",
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
@@ -1907,19 +1908,24 @@ xla_test(
         ":xla_internal_test_main",  # fixdeps: keep
         "//xla:array2d",
         "//xla:array3d",
+        "//xla:executable_run_options",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla/client:client_library",
+        "//xla/client:local_client",
         "//xla/client:xla_builder",
-        "//xla/client/lib:constants",
         "//xla/ffi",
-        "//xla/ffi:attribute_map",
+        "//xla/ffi:execution_context",
         "//xla/ffi:ffi_api",
         "//xla/hlo/ir:hlo",
         "//xla/service",
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
+        "//xla/service:platform_util",
+        "//xla/service:shaped_buffer",
+        "//xla/stream_executor:platform",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:dynamic_annotations",
@@ -2060,8 +2066,8 @@ xla_test(
     shard_count = 20,
     # TODO(b/148276347) The test fails on macOS.
     tags = [
+        "no_mac",
         "noasan",
-        "nomac",
         "nosan",
         "test_xla_cpu_thunks",
     ],
@@ -2636,10 +2642,6 @@ xla_test(
 xla_test(
     name = "llvm_compiler_test",
     srcs = ["llvm_compiler_test.cc"],
-    backend_tags = {
-        # TODO(b/317293391) Remove once Bazel test_suite handles tags correctly.
-        "gpu": ["gpu"],
-    },
     backends = [
         "cpu",
         "gpu",
@@ -3012,7 +3014,7 @@ xla_test(
 xla_test(
     name = "iota_test",
     srcs = ["iota_test.cc"],
-    shard_count = 30,
+    shard_count = 50,
     tags = [
         # Require optimized builds, iota_test_cpu is very slow in fastbuild.
         "optonly",
@@ -3024,7 +3026,13 @@ xla_test(
         ":test_macros_header",
         ":xla_internal_test_main",
         "//xla:error_spec",
-        "@local_tsl//tsl/platform:errors",
+        "//xla:shape_util",
+        "//xla:types",
+        "//xla:xla_data_proto_cc",
+        "//xla/client:xla_builder",
+        "@com_google_absl//absl/log:check",
+        "@com_google_googletest//:gtest_main",
+        "@local_tsl//tsl/platform:ml_dtypes",
     ],
 )
 
@@ -3105,7 +3113,6 @@ xla_test(
     real_hardware_only = True,
     shard_count = 3,
     tags = [
-        "enable_for_xla_interpreter",
         "optonly",
         "test_xla_cpu_thunks",
     ],
