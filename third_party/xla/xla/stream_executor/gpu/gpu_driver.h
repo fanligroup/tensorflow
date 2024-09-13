@@ -295,31 +295,6 @@ class GpuDriver {
                                       GpuGraphHandle graph,
                                       GraphExecUpdateResultInfo* result);
 
-  // Graph node type.
-  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TYPES.html#group__CUDA__TYPES_1g0731a28f826922120d783d8444e154dc
-  // https://docs.amd.com/projects/HIP/en/docs-5.0.0/doxygen/html/group___graph.html#ga4727d20b89566832c74b762f987b9728
-  enum class GraphNodeType {
-    kKernel,
-    kMemcpy,
-    kMemset,
-    kHost,
-    kGraph,
-    kEmpty,
-    kWaitEvent,
-    kEventRecord,
-    kExtSemasSignal,
-    kExtSemasWait,
-    kMemAlloc,
-    kMemFree,
-    kBatchMemOp,
-  };
-
-  // Return the node type of the graph node.
-  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1gdb1776d97aa1c9d5144774b29e4b8c3e
-  // https://docs.amd.com/projects/HIP/en/docs-5.0.0/doxygen/html/group___graph.html#ga87c68ae9408a6438d4a1101560ceea11
-  static absl::StatusOr<GraphNodeType> GraphNodeGetType(
-      GpuGraphNodeHandle node);
-
   // Returns a node's dependencies.
   //
   // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g048f4c0babcbba64a933fc277cd45083
@@ -417,51 +392,6 @@ class GpuDriver {
       unsigned int block_dim_x, unsigned int block_dim_y,
       unsigned int block_dim_z, unsigned int shared_mem_bytes,
       void** kernel_params, void** extra);
-
-  // Memory protection flags for mappings.
-  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TYPES.html#group__CUDA__TYPES_1gfba87b8c4a8cd091554d8e2c3fc9b40a
-  enum class MemAccessFlags {
-    kNone,
-    kRead,
-    kReadWrite,
-  };
-
-  // Specifies the type of memory location
-  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TYPES.html#group__CUDA__TYPES_1g75cfd5b9fa5c1c6ee2be2547bfbe882e
-  enum class MemLocationType {
-    kInvalid,
-    kDevice,
-    kHost,
-    kHostNuma,
-    kHostNumaCurrent,
-  };
-
-  // The memory allocation type
-  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TYPES.html#group__CUDA__TYPES_1g7ed3482e0df8712d79a99bcb3bc4a95b
-  enum class MemAllocationType {
-    kInvalid,
-    kPinned,
-  };
-
-  // Creates a memory allocation node and adds it to a graph.
-  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g73a351cb71b2945a0bcb913a93f69ec9
-  static absl::Status GraphAddMemAllocNode(
-      GpuGraphNodeHandle* node, GpuGraphHandle graph,
-      absl::Span<const GpuGraphNodeHandle> deps, MemAccessFlags access_flags,
-      MemLocationType location_type, int device_id,
-      MemAllocationType allocation_type, uint64_t size, GpuDevicePtr* d_ptr,
-      uint64_t max_pool_size = 0);
-
-  // Fetch memory allocation node's allocated address;
-  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1gee2c7d66d3d96b1470c1d1a769f250a2
-  static absl::StatusOr<std::pair<GpuDevicePtr, uint64_t>>
-  GraphGetMemAllocNodeParams(GpuGraphNodeHandle node);
-
-  // Create a memfree node and adds it to a graph.
-  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1geb7cdce5d9be2d28d9428e74eb00fa53
-  static absl::Status GraphAddMemFreeNode(
-      GpuGraphNodeHandle* node, GpuGraphHandle graph,
-      absl::Span<const GpuGraphNodeHandle> deps, GpuDevicePtr gpu_dst);
 
   // Creates a memcpy node and adds it to a graph.
   // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g674da6ab54a677f13e0e0e8206ff5073
@@ -586,12 +516,13 @@ class GpuDriver {
   // -- Asynchronous memcopies.
   // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g56f30236c7c5247f8e061b59d3268362
 
-  static bool AsynchronousMemcpyD2H(Context* context, void* host_dst,
-                                    GpuDevicePtr gpu_src, uint64_t size,
-                                    GpuStreamHandle stream);
-  static bool AsynchronousMemcpyH2D(Context* context, GpuDevicePtr gpu_dst,
-                                    const void* host_src, uint64_t size,
-                                    GpuStreamHandle stream);
+  static absl::Status AsynchronousMemcpyD2H(Context* context, void* host_dst,
+                                            GpuDevicePtr gpu_src, uint64_t size,
+                                            GpuStreamHandle stream);
+  static absl::Status AsynchronousMemcpyH2D(Context* context,
+                                            GpuDevicePtr gpu_dst,
+                                            const void* host_src, uint64_t size,
+                                            GpuStreamHandle stream);
   static absl::Status AsynchronousMemcpyD2D(Context* context,
                                             GpuDevicePtr gpu_dst,
                                             GpuDevicePtr gpu_src, uint64_t size,
@@ -611,14 +542,16 @@ class GpuDriver {
   // Enqueues a callback operation into stream.
   // See StreamCallback above and the NVIDIA documentation for additional
   // details.
-  static bool AddStreamCallback(Context* context, GpuStreamHandle stream,
-                                StreamCallback callback, void* data);
+  static absl::Status AddStreamCallback(Context* context,
+                                        GpuStreamHandle stream,
+                                        StreamCallback callback, void* data);
 
   // Causes stream to wait for event to trigger before proceeding via
   // cuStreamWaitEvent.
   // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__STREAM.html#axzz334nAXAhM
-  static bool WaitStreamOnEvent(Context* context, GpuStreamHandle stream,
-                                GpuEventHandle event);
+  static absl::Status WaitStreamOnEvent(Context* context,
+                                        GpuStreamHandle stream,
+                                        GpuEventHandle event);
 
   // Blocks the calling thread until the operations enqueued onto stream have
   // been completed, via cuStreamSynchronize.
@@ -635,12 +568,7 @@ class GpuDriver {
   // have been completed, via cuCtxSynchronize.
   //
   // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__CTX.html#group__CUDA__CTX_1g7a54725f28d34b8c6299f0c6ca579616
-  static bool SynchronizeContext(Context* context);
-
-  // Returns true if all stream tasks have completed at time of the call. Note
-  // the potential for races around this call (if another thread adds work to
-  // the stream immediately after this returns).
-  static bool IsStreamIdle(Context* context, GpuStreamHandle stream);
+  static absl::Status SynchronizeContext(Context* context);
 
   // Returns whether code in the from context can access memory in the to
   // context via cuDeviceCanAccessPeer.
@@ -661,8 +589,9 @@ class GpuDriver {
   // Returns the elapsed milliseconds between start and stop via
   // cuEventElapsedTime.
   // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EVENT.html#group__CUDA__EVENT_1gdfb1178807353bbcaa9e245da497cf97
-  static bool GetEventElapsedTime(Context* context, float* elapsed_milliseconds,
-                                  GpuEventHandle start, GpuEventHandle stop);
+  static absl::StatusOr<float> GetEventElapsedTime(Context* context,
+                                                   GpuEventHandle start,
+                                                   GpuEventHandle stop);
 
   // Records that an event occurred when execution reaches the current point in
   // thestream via cuEventRecord.
@@ -671,9 +600,6 @@ class GpuDriver {
                                   GpuStreamHandle stream);
 
   // -- Pointer-specific calls.
-
-  // Returns the device associated with the context from GetPointerContext().
-  static absl::StatusOr<GpuDeviceHandle> GetPointerDevice(GpuDevicePtr pointer);
 
   // Returns the memory space addressed by pointer.
   static absl::StatusOr<MemoryType> GetPointerMemorySpace(GpuDevicePtr pointer);
@@ -700,11 +626,6 @@ class GpuDriver {
   // (supported on ROCm only)
   static absl::Status GetGpuGCNArchName(GpuDeviceHandle device,
                                         std::string* gcnArchName);
-
-#if TENSORFLOW_USE_ROCM
-  // tests the current device for MFMA insn support (ROCm only)
-  static absl::StatusOr<bool> GetMFMASupport();
-#endif
 
   // Returns the number of multiprocessors on the device (note that the device
   // may be multi-GPU-per-board).

@@ -465,7 +465,6 @@ cc_library(
         "//tensorflow/compiler/mlir/tensorflow:tensorflow_types",
         "//tensorflow/core:framework",
         "//tensorflow/core/platform:status",
-        "//tensorflow/lite/schema:schema_fbs",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
@@ -489,6 +488,17 @@ cc_library(
 )
 
 cc_library(
+    name = "pass_registry_utils",
+    hdrs = ["transforms/pass_registry_utils.h"],
+    compatible_with = get_compatible_with_portable(),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pass",
+        "@llvm-project//mlir:Pass",
+    ],
+)
+
+cc_library(
     name = "tensorflow_lite",
     srcs = [
         "ir/tfl_canonicalize.inc",
@@ -496,6 +506,7 @@ cc_library(
     hdrs = [
         "ir/tfl_ops.h",
         "transforms/optimize_pass.h",
+        "transforms/pass_registry_utils.h",
         "transforms/passes.h",
         "utils/attribute_utils.h",
         "utils/utils.h",
@@ -506,6 +517,7 @@ cc_library(
         ":cost_estimators",
         ":optimize_pass_options",
         ":pass",
+        ":pass_registry_utils",
         ":size_utils",
         ":tensorflow_lite_canonicalize_inc_gen",
         ":tensorflow_lite_op_enums_inc_gen",
@@ -1320,6 +1332,7 @@ cc_library(
         "//tensorflow/compiler/mlir/lite/metrics:error_collector_inst",
         "//tensorflow/compiler/mlir/lite/quantization/ir:QuantOps",
         "//tensorflow/compiler/mlir/lite/schema:schema_conversion_utils",
+        "//tensorflow/compiler/mlir/lite/schema:schema_fbs",
         "//tensorflow/compiler/mlir/lite/schema:schema_fbs_with_mutable",
         "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/compiler/mlir/tensorflow:convert_tensor",
@@ -1329,10 +1342,8 @@ cc_library(
         "//tensorflow/core:framework",
         "//tensorflow/core:portable_gif_internal",
         "//tensorflow/core:protos_all_cc",
-        "//tensorflow/lite/schema:schema_fbs",
         "//tensorflow/lite/toco:toco_flags_proto_cc",
         "//tensorflow/lite/tools/versioning",
-        "//tensorflow/lite/tools/versioning:gpu_compatibility",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -1577,6 +1588,7 @@ cc_library(
         ":common",
         ":fake_quant_utils",
         ":pass",
+        ":pass_registry_utils",
         ":tensorflow_lite_d2s",  # buildcleaner: keep
         ":tensorflow_lite_legalize_tf",  # buildcleaner: keep
         ":tensorflow_lite_optimize",  # buildcleaner: keep
@@ -1746,6 +1758,7 @@ cc_library(
     copts = tflite_copts_warnings(),
     visibility = [
         "//tensorflow/compiler/mlir/lite/core:__pkg__",
+        "//tensorflow/compiler/mlir/lite/experimental/lrt:__subpackages__",
         "//tensorflow/lite:__pkg__",
         "//tensorflow/lite/core:__pkg__",
     ],

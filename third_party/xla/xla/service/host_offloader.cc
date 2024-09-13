@@ -661,6 +661,12 @@ absl::Status HostOffloader::CreateAllocateBufferForDynamicUpdateSlice(
       // The AllocateBuffer that we're about to create will suffice for every
       // DynamicUpdateSlice we pass through as we walk up the graph.
       dynamic_update_slices_already_allocated_.insert(instruction);
+    } else if (instruction->IsCustomCall("AllocateBuffer")) {
+      VLOG(2) << absl::StreamFormat(
+          "DynamicUpdateSlice \"%s\" already writes into an AllocateBuffer "
+          "\"%s\"",
+          dynamic_update_slice->name(), instruction->name());
+      return absl::OkStatus();
     }
     const std::vector<InstructionAndShapeIndex> predecessors =
         host_offload_utils::GetPredecessors(instruction_and_shape);
@@ -1017,8 +1023,14 @@ absl::StatusOr<bool> HostOffloader::Run(
   // it, we need to re-run the loop.
   do {
     changed_in_loop = false;
-    for (HloComputation* computation :
-         module->MakeComputationPostOrder(execution_threads)) {
+    // Iterate over the computations in the order that they are executed. This
+    // ensures we process "MoveToHost" instructions that are at the beginning of
+    // a host memory offload instruction chain.
+    std::vector<HloComputation*> post_order_computations =
+        module->MakeComputationPostOrder(execution_threads);
+    for (auto it = post_order_computations.rbegin();
+         it != post_order_computations.rend(); ++it) {
+      HloComputation* computation = *it;
       for (HloInstruction* instruction :
            computation->MakeInstructionPostOrder()) {
         if (instruction->IsCustomCall(

@@ -50,6 +50,9 @@ _XLA_DEFAULT_TARGET_PATTERNS = (
     "//build_tools/...",
     "@local_tsl//tsl/...",
 )
+_KOKORO_ARTIFACTS_DIR = os.environ.get(
+    "KOKORO_ARTIFACTS_DIR", "$KOKORO_ARTIFACTS_DIR"
+)
 
 
 def sh(args, check=True, **kwargs):
@@ -126,7 +129,10 @@ class Build:
   def commands(self) -> List[List[str]]:
     """Returns list of commands for a build."""
     cmds = []
-    cmds.append(["./github/xla/.kokoro/generate_index_html.sh", "index.html"])
+    cmds.append([
+        f"{_KOKORO_ARTIFACTS_DIR}/github/xla/.kokoro/generate_index_html.sh",
+        "index.html",
+    ])
     if self.repo != "openxla/xla":
       _, repo_name = self.repo.split("/")
 
@@ -210,14 +216,13 @@ def nvidia_gpu_build_with_compute_capability(
       test_tag_filters=("-no_oss", "requires-gpu-nvidia", "gpu")
       + extra_gpu_tags,
       build_tag_filters=("-no_oss", "requires-gpu-nvidia", "gpu"),
-      options=dict(
-          run_under="//tools/ci_build/gpu_build:parallel_gpu_execute",
-          repo_env=f"TF_CUDA_COMPUTE_CAPABILITIES={compute_capability/10}",
+      options={
+          "run_under": "//tools/ci_build/gpu_build:parallel_gpu_execute",
+          "repo_env": f"TF_CUDA_COMPUTE_CAPABILITIES={compute_capability/10}",
+          "@cuda_driver//:enable_forward_compatibility": "true",
           **_DEFAULT_BAZEL_OPTIONS,
-      ),
-      extra_setup_commands=(
-          ["nvidia-smi"],
-      ),
+      },
+      extra_setup_commands=(["nvidia-smi"],),
   )
 
 

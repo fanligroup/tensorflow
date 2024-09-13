@@ -64,7 +64,7 @@ class AutoShardingImplementation {
       HloModule* module,
       const absl::flat_hash_set<std::string>& replicated_small_tensors,
       const absl::flat_hash_set<absl::string_view>& execution_threads,
-      const absl::flat_hash_map<std::string, const HloInstruction*>&
+      const absl::flat_hash_map<std::string, HloSharding>&
           sharding_propagation_solution = {});
 
   // Returns sharding annotations that need to be preserved in a map (for
@@ -202,6 +202,9 @@ absl::Status CheckAliasSetCompatibility(const AliasSet& alias_set,
                                         const StrategyGroups& strategy_groups,
                                         const HloInstructionSequence& sequence,
                                         bool crash_on_error);
+absl::Status RemoveFollowersIfMismatchedStrategies(
+    const AliasSet& alias_set, const StrategyGroups& strategy_groups,
+    const HloInstructionSequence& sequence, bool crash_on_error);
 
 absl::Status GenerateReduceScatter(
     const HloInstructionSequence& sequence, const AliasMap& alias_map,
@@ -229,7 +232,7 @@ AutoShardingSolverResult Solve(
     const std::vector<absl::btree_set<int64_t>>& node_groups,
     const std::vector<absl::btree_set<int64_t>>& edge_groups,
     const AutoShardingOption& option, absl::string_view request_prefix,
-    const absl::flat_hash_map<std::string, const HloInstruction*>&
+    const absl::flat_hash_map<std::string, HloSharding>&
         sharding_propagation_solution = {});
 
 // Populates temporal distance values.

@@ -164,10 +164,11 @@ ENTRY main {
   EXPECT_THAT(*root, MatchTiledHloInstruction(/*tile_sizes=*/{1, 10},
                                               /*tile_strides=*/{1, 1},
                                               /*tile_offsets_indexing=*/R"(
-    (d0, d1) -> (d0, d1 * 10)
+    (d0, d1) -> (d0, d1 * 10),
     domain:
-    d0 in [0, 1]
-    d1 in [0, 9]
+    d0 in [0, 1],
+    d1 in [0, 9],
+    is_simplified: true
   )"));
 
   auto p0_from_subtract0 = root->operand(0);
@@ -177,20 +178,22 @@ ENTRY main {
                                       /*tile_sizes=*/{1, 10},
                                       /*tile_strides=*/{1, 1},
                                       /*tile_offsets_indexing=*/R"(
-    (d0, d1) -> (d0, d1 * 10)
+    (d0, d1) -> (d0, d1 * 10),
     domain:
-    d0 in [0, 1]
-    d1 in [0, 9]
+    d0 in [0, 1],
+    d1 in [0, 9],
+    is_simplified: true
   )"));
 
   EXPECT_THAT(*p0_from_subtract1, MatchTiledHloInstruction(
                                       /*tile_sizes=*/{1, 97},
                                       /*tile_strides=*/{1, 1},
                                       /*tile_offsets_indexing=*/R"(
-    (d0, d1) -> (d0, 0)
+    (d0, d1) -> (d0, 0),
     domain:
-    d0 in [0, 1]
-    d1 in [0, 9]
+    d0 in [0, 1],
+    d1 in [0, 9],
+    is_simplified: true
   )"));
 }
 
@@ -279,10 +282,11 @@ ENTRY main {
               MatchTiledHloInstruction(
                   /*tile_sizes=*/{1, 97}, /*tile_strides=*/{1, 1},
                   /*tile_offsets_indexing=*/R"(
-    (d0, d1) -> (d0, 0)
+    (d0, d1) -> (d0, 0),
     domain:
-    d0 in [0, 1]
-    d1 in [0, 0]
+    d0 in [0, 1],
+    d1 in [0, 0],
+    is_simplified: true
   )"));
 }
 
@@ -312,22 +316,24 @@ ENTRY main {
   EXPECT_THAT(*root, MatchTiledHloInstruction(
                          /*tile_sizes=*/{2, 4, 2}, /*tile_strides=*/{1, 1, 1},
                          /*tile_offsets_indexing=*/R"(
-    (d0, d1, d2) -> (d0 * 2, d1 * 4, d2 * 2)
+    (d0, d1, d2) -> (d0 * 2, d1 * 4, d2 * 2),
     domain:
-    d0 in [0, 1]
-    d1 in [0, 1]
-    d2 in [0, 7]
+    d0 in [0, 1],
+    d1 in [0, 1],
+    d2 in [0, 7],
+    is_simplified: true
   )"));
 
   EXPECT_THAT(*root->operand(0),
               MatchTiledHloInstruction(
                   /*tile_sizes=*/{4, 2, 2}, /*tile_strides=*/{1, 1, 1},
                   /*tile_offsets_indexing=*/R"(
-    (d0, d1, d2) -> (d1 * 4, d2 * 2, d0 * 2)
+    (d0, d1, d2) -> (d1 * 4, d2 * 2, d0 * 2),
     domain:
-    d0 in [0, 1]
-    d1 in [0, 1]
-    d2 in [0, 7]
+    d0 in [0, 1],
+    d1 in [0, 1],
+    d2 in [0, 7],
+    is_simplified: true
   )"));
 }
 
@@ -361,30 +367,33 @@ ENTRY main {
   EXPECT_THAT(*root, MatchTiledHloInstruction(
                          /*tile_sizes=*/{2, 2}, /*tile_strides=*/{1, 1},
                          /*tile_offsets_indexing=*/R"(
-    (d0, d1) -> (d0 * 2, d1 * 2)
+    (d0, d1) -> (d0 * 2, d1 * 2),
     domain:
-    d0 in [0, 1]
-    d1 in [0, 3]
+    d0 in [0, 1],
+    d1 in [0, 3],
+    is_simplified: true
   )"));
 
   EXPECT_THAT(*p0_from_slice0,
               MatchTiledHloInstruction(
                   /*tile_sizes=*/{2, 2}, /*tile_strides=*/{1, 1},
                   /*tile_offsets_indexing=*/R"(
-    (d0, d1) -> (d0 * 2, d1 * 2 + 2)
+    (d0, d1) -> (d0 * 2, d1 * 2 + 2),
     domain:
-    d0 in [0, 1]
-    d1 in [0, 3]
+    d0 in [0, 1],
+    d1 in [0, 3],
+    is_simplified: true
   )"));
 
   EXPECT_THAT(*p0_from_slice1,
               MatchTiledHloInstruction(
                   /*tile_sizes=*/{2, 2}, /*tile_strides=*/{1, 1},
                   /*tile_offsets_indexing=*/R"(
-    (d0, d1) -> (d0 * 2 + 3, d1 * 2 + 4)
+    (d0, d1) -> (d0 * 2 + 3, d1 * 2 + 4),
     domain:
-    d0 in [0, 1]
-    d1 in [0, 3]
+    d0 in [0, 1],
+    d1 in [0, 3],
+    is_simplified: true
   )"));
 }
 
@@ -502,10 +511,10 @@ ENTRY main {
     EXPECT_THAT(conjunction, SizeIs(2));
 
   // We expect the constraints here to be
-  //    6 mod s0 in [0, 0] && 8 mod s1 in [0, 0] ||
-  //    6 mod s0 in [0, 0] && s1 mod 8 in [0, 0] ||
-  //    8 mod s1 in [0, 0] && s0 mod 6 in [0, 0] ||
-  //    s0 mod 6 in [0, 0] && s1 mod 8 in [0, 0]
+  //    6 mod d0 in [0, 0] && 8 mod s1 in [0, 0] ||
+  //    6 mod d0 in [0, 0] && d1 mod 8 in [0, 0] ||
+  //    8 mod d1 in [0, 0] && d0 mod 6 in [0, 0] ||
+  //    d0 mod 6 in [0, 0] && d1 mod 8 in [0, 0],
   // Tile sizes {6, 8} satisfy these constraints.
   std::vector<int64_t> possible_tile_parameters({6, 8});
   EXPECT_THAT(analysis->ParametersSatisfyConstraints(possible_tile_parameters),
@@ -858,10 +867,11 @@ ENTRY main {
                   /*tile_sizes=*/{1, 1},
                   /*tile_strides=*/{1, 1},
                   /*tile_offsets_indexing=*/R"(
-    (d0, d1) -> (d0, d1)
+    (d0, d1) -> (d0, d1),
     domain:
-    d0 in [0, 65537]
-    d1 in [0, 32767]
+    d0 in [0, 65537],
+    d1 in [0, 32767],
+    is_simplified: true
   )"));
 }
 
@@ -913,26 +923,28 @@ ENTRY main {
                                   /*tile_sizes=*/{1, 1, 32},
                                   /*tile_strides=*/{0, 1, 1},
                                   /*tile_offsets_indexing=*/R"(
-    (d0, d1) -> (0, d1, 0)
+    (d0, d1) -> (0, d1, 0),
     domain:
-    d0 in [0, 0]
-    d1 in [0, 1]
+    d0 in [0, 0],
+    d1 in [0, 1],
+    is_simplified: true
   )"));
 
   EXPECT_THAT(*param_0_tile, MatchTiledHloInstruction(
                                  /*tile_sizes=*/{1, 1, 32},
                                  /*tile_strides=*/{0, 1, 1},
                                  /*tile_offsets_indexing=*/R"(
-    (d0, d1)[s0, s1] -> (s0, d1, s1)
+    (d0, d1)[s0, s1] -> (s0, d1, s1),
     domain:
-    d0 in [0, 0]
-    d1 in [0, 1]
-    s0 in [0, 1]
-      hlo: %of1 = s32[] parameter(1)
-      (d0, d1, d2) -> ()
-    s1 in [0, 226]
-      hlo: %of3 = s32[] parameter(3)
-      (d0, d1, d2) -> ()
+    d0 in [0, 0],
+    d1 in [0, 1],
+    s0 in [0, 1],
+      hlo: %of1 = s32[] parameter(1),
+      (d0, d1, d2) -> (),
+    s1 in [0, 226],
+      hlo: %of3 = s32[] parameter(3),
+      (d0, d1, d2) -> (),
+    is_simplified: true
   )"));
 }
 

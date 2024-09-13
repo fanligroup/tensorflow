@@ -42,6 +42,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/Sequence.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -57,6 +58,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributeInterfaces.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypeInterfaces.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/Diagnostics.h"  // from @llvm-project
 #include "mlir/IR/DialectImplementation.h"  // from @llvm-project
@@ -485,6 +487,48 @@ bool VerifyMulOpShapeConstraints(MulOp op) {
   }
   return false;
 }
+
+class FlatIndHelper {
+ public:
+  explicit FlatIndHelper(mlir::ShapedType type) : type_(type) {}
+
+  llvm::SmallVector<int64_t> GetShapedInd(int64_t flat_ind) const {
+    llvm::SmallVector<int64_t> result;
+    result.reserve(type_.getRank());
+
+    auto num_els = type_.getNumElements();
+
+    for (auto d : type_.getShape()) {
+      num_els /= d;
+      result.push_back(flat_ind / num_els);
+      flat_ind %= num_els;
+    }
+
+    return result;
+  }
+
+  int64_t GetFlatInd(llvm::ArrayRef<int64_t> shaped_ind) const {
+    int64_t result = 0;
+
+    auto num_els = type_.getNumElements();
+    for (auto [max_dim, ind_dim] : llvm::zip(type_.getShape(), shaped_ind)) {
+      num_els /= max_dim;
+      result += num_els * ind_dim;
+    }
+
+    return result;
+  }
+
+  static void AddOffset(llvm::SmallVector<int64_t>& target,
+                        const llvm::SmallVector<int64_t>& offset) {
+    for (auto [ind, val] : llvm::enumerate(offset)) {
+      target[ind] += val;
+    }
+  }
+
+ private:
+  mlir::ShapedType type_;
+};
 
 //===----------------------------------------------------------------------===//
 // TensorFlowLiteDialect
@@ -2495,6 +2539,33 @@ void PackOp::getCanonicalizationPatterns(RewritePatternSet& results,
 // SliceOp
 //===----------------------------------------------------------------------===//
 
+llvm::SmallVector<int64_t> UnpackIndexOperand(Attribute operand) {
+  auto data = cast<DenseIntElementsAttr>(operand);
+
+  const bool is_i32 = data.getElementType().isSignlessInteger(32);
+
+  if (data.isSplat()) {
+    int64_t splat_val;
+
+    if (is_i32) {
+      splat_val = data.getSplatValue<int32_t>();
+    } else {
+      splat_val = data.getSplatValue<int64_t>();
+    }
+
+    return llvm::SmallVector<int64_t>(data.getShapedType().getNumElements(),
+                                      splat_val);
+  }
+
+  if (!is_i32) {
+    return llvm::to_vector(data.getValues<int64_t>());
+  }
+
+  return llvm::to_vector(llvm::map_range(data.getValues<int32_t>(), [](auto v) {
+    return static_cast<int64_t>(v);
+  }));
+}
+
 OpFoldResult SliceOp::fold(FoldAdaptor adaptor) {
   if (!getType().hasStaticShape()) {
     return {};
@@ -2530,40 +2601,44 @@ OpFoldResult SliceOp::fold(FoldAdaptor adaptor) {
     return {};
   }
 
-  auto begin_data = dyn_cast_or_null<DenseIntElementsAttr>(begin);
-  if (!begin_data || !begin_data.isSplat() ||
-      !begin_data.getElementType().isSignlessInteger(32)) {
-    return {};
-  }
-  if (begin_data.getSplatValue<int32_t>() != 0) {
+  auto begin_vals = UnpackIndexOperand(begin);
+  auto size_vals = UnpackIndexOperand(size);
+
+  if (size_vals != getType().getShape()) {
     return {};
   }
 
-  auto size_data = dyn_cast_or_null<DenseIntElementsAttr>(size);
-  if (!size_data.getElementType().isSignlessInteger(32)) {
-    return {};
-  }
-
-  auto size_vals = size_data.getValues<int32_t>();
-  for (int i = 1; i < input_type.getRank(); ++i) {
-    if (size_vals[i] != input_type.getShape()[i]) {
+  for (auto [begin, size, dim] :
+       llvm::zip(begin_vals, size_vals, input_type.getShape())) {
+    if (size < 0) {
+      // TODO: b/351437662 - Add support for this case.
+      return {};
+    }
+    if (begin + size > dim) {
       return {};
     }
   }
-  if (size_vals[0] == input_type.getShape()[0]) {
-    return adaptor.getInput();
+
+  auto input_dense = cast<DenseElementsAttr>(input);
+  std::vector<Attribute> input_data(input_dense.value_begin<Attribute>(),
+                                    input_dense.value_end<Attribute>());
+
+  const FlatIndHelper write_inds(getType());
+  const FlatIndHelper read_inds(input_type);
+
+  std::vector<Attribute> result_data(getType().getNumElements());
+
+  for (int w_flat_ind = 0; w_flat_ind < getType().getNumElements();
+       ++w_flat_ind) {
+    auto write_shaped_ind = write_inds.GetShapedInd(w_flat_ind);
+
+    FlatIndHelper::AddOffset(write_shaped_ind, begin_vals);
+    const auto read_flat_ind = read_inds.GetFlatInd(write_shaped_ind);
+
+    result_data[w_flat_ind] = input_data[read_flat_ind];
   }
 
-  auto input_data = dyn_cast_or_null<DenseElementsAttr>(input);
-  if (!input_data) {
-    return {};
-  }
-
-  auto input_begin = input_data.value_begin<Attribute>();
-  std::vector<Attribute> new_data(input_begin,
-                                  input_begin + getType().getNumElements());
-
-  return DenseElementsAttr::get(getType(), new_data);
+  return DenseElementsAttr::get(getType(), result_data);
 }
 
 mlir::LogicalResult SliceOp::verify() {
@@ -4869,6 +4944,45 @@ int64_t MaxPool2DOp::GetArithmeticCount(Operation* op) {
 }
 
 //===----------------------------------------------------------------------===//
+// ReverseV2Op
+//===----------------------------------------------------------------------===//
+
+OpFoldResult ReverseV2Op::fold(FoldAdaptor adaptor) {
+  auto input = adaptor.getInput();
+  auto axis = adaptor.getAxis();
+
+  if (!input || !axis) {
+    return {};
+  }
+
+  auto axis_val = llvm::cast<DenseIntElementsAttr>(axis);
+  llvm::SetVector<int32_t> axis_set(axis_val.value_begin<int32_t>(),
+                                    axis_val.value_end<int32_t>());
+
+  auto input_type = getInput().getType();
+  const FlatIndHelper helper(input_type);
+
+  std::vector<Attribute> new_data(input_type.getNumElements());
+  auto input_data = llvm::cast<DenseElementsAttr>(input);
+
+  for (auto [i, val] : llvm::enumerate(input_data.getValues<Attribute>())) {
+    auto shaped_ind = helper.GetShapedInd(i);
+
+    for (int d = 0; d < shaped_ind.size(); ++d) {
+      if (!axis_set.contains(d)) {
+        continue;
+      }
+
+      shaped_ind[d] = input_type.getDimSize(d) - 1 - shaped_ind[d];
+    }
+
+    new_data[helper.GetFlatInd(shaped_ind)] = val;
+  }
+
+  return DenseElementsAttr::get(getType(), new_data);
+}
+
+//===----------------------------------------------------------------------===//
 // L2NormalizationOp
 //===----------------------------------------------------------------------===//
 
@@ -4893,6 +5007,39 @@ OpFoldResult PadOp::fold(FoldAdaptor) {
     return getInput();
 
   return {};
+}
+
+// When padding amounts are constants, cast them to i32. XNN can only
+// consume i32 pad amounts in some cases.
+struct CastConstPadAmounts : public OpRewritePattern<PadOp> {
+  using OpRewritePattern<PadOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(PadOp op,
+                                PatternRewriter& rewriter) const override {
+    auto padding_amount_op = op.getPadding().getDefiningOp();
+    if (!padding_amount_op ||
+        !padding_amount_op->hasTrait<OpTrait::ConstantLike>()) {
+      return failure();
+    }
+
+    auto padding_type = op.getPadding().getType();
+    if (!padding_type.getElementType().isSignlessInteger(64)) {
+      return failure();
+    }
+
+    auto cast = rewriter.createOrFold<CastOp>(
+        padding_amount_op->getLoc(),
+        padding_type.clone(rewriter.getIntegerType(32)), op.getPadding());
+
+    rewriter.modifyOpInPlace(op, [&]() { op->setOperand(1, cast); });
+
+    return success();
+  }
+};
+
+void PadOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                        MLIRContext* context) {
+  results.add<CastConstPadAmounts>(context);
 }
 
 //===----------------------------------------------------------------------===//
