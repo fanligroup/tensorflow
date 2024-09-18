@@ -311,6 +311,31 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "all_gather_dynamic_slice_simplifier",
+    srcs = ["all_gather_dynamic_slice_simplifier.cc"],
+    hdrs = ["all_gather_dynamic_slice_simplifier.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/service:collective_opt_utils",
+        "//xla/service:hlo_creation_utils",
+        "//xla/service:op_expander_pass",
+    ],
+)
+
+xla_cc_test(
+    name = "all_gather_dynamic_slice_simplifier_test",
+    srcs = ["all_gather_dynamic_slice_simplifier_test.cc"],
+    deps = [
+        ":all_gather_dynamic_slice_simplifier",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/tests:hlo_test_base",
+        "@local_tsl//tsl/platform:test_main",
+    ],
+)
+
+cc_library(
     name = "collective_permute_cycle_decomposer",
     srcs = ["collective_permute_cycle_decomposer.cc"],
     hdrs = ["collective_permute_cycle_decomposer.h"],
@@ -1890,6 +1915,7 @@ cc_library(
         "//xla/service:logical_buffer",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:cublas_cudnn",
+        "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu:reduction_utils",
         "//xla/service/gpu:stream_executor_util",

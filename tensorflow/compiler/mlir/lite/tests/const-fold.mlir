@@ -1215,6 +1215,18 @@ func.func @ConstantFoldFullyConnectedCheckPrecision() -> tensor<1xf32> {
   // CHECK:  return %[[CST]]
 }
 
+// CHECK-LABEL: fully_connected_with_unit_dim
+func.func @fully_connected_with_unit_dim() -> tensor<1x5xf32> {
+  %0 = "tfl.pseudo_const"() <{value = dense<1.0> : tensor<1x5xf32>}> : () -> tensor<1x5xf32>
+  %1 = "tfl.pseudo_const"() <{value = dense<1.0> : tensor<5x5xf32>}> : () -> tensor<5x5xf32>
+  %2 = "tfl.pseudo_const"() <{value = dense<1.0> : tensor<1x5xf32>}> : () -> tensor<1x5xf32>
+  %3 = "tfl.fully_connected"(%0, %1, %2) <{asymmetric_quantize_inputs = false, fused_activation_function = "NONE", keep_num_dims = true, weights_format = "DEFAULT"}> : (tensor<1x5xf32>, tensor<5x5xf32>, tensor<1x5xf32>) -> tensor<1x5xf32>
+  return %3 : tensor<1x5xf32>
+}
+
+// CHECK:     %cst = arith.constant dense<6.000000e+00> : tensor<1x5xf32>
+// CHECK-NOT: fully_connected
+
 // CHECK-LABEL: @ShapeOpI32
 func.func @ShapeOpI32(%arg0 : tensor<576x72xf32>) -> tensor<2xi32> {
   %0 = "tfl.shape"(%arg0) : (tensor<576x72xf32>) -> tensor<2xi32>
@@ -1736,6 +1748,15 @@ func.func @sum() -> tensor<2xf32> {
 
 // CHECK: arith.constant dense<[1.200000e+01, 1.600000e+01]> : tensor<2xf32>
 
+// CHECK-LABEL: sum_keep_dims
+func.func @sum_keep_dims() -> tensor<1x1x2xf32> {
+  %cst = arith.constant dense<[0, 1]> : tensor<2xi32>
+  %cst_1 = arith.constant dense<[[[0.0, 1.0], [2.0, 3.0]], [[4.0, 5.0], [6.0, 7.0]]]> : tensor<2x2x2xf32>
+  %0 = "tfl.sum"(%cst_1, %cst) <{keep_dims = true}> : (tensor<2x2x2xf32>, tensor<2xi32>) -> tensor<1x1x2xf32>
+  func.return %0 : tensor<1x1x2xf32>
+}
+
+// CHECK-LITERAL: arith.constant dense<[[[1.200000e+01, 1.600000e+01]]]> : tensor<1x1x2xf32>
 
 // CHECK-LABEL: gather
 func.func @gather() -> (tensor<2x3x4x5xi16>, tensor<2x3x4x5xi16>) {
@@ -1893,3 +1914,6 @@ func.func @slice_big_float() -> tensor<1x1x1792x256xf32> {
 
 // CHECK-LITERAL: %cst = arith.constant dense<9.000000e+00> : tensor<1x1x1792x256xf32>
 // CHECK-NOT:     slice
+
+
+

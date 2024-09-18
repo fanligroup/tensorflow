@@ -356,3 +356,22 @@ tsl_gpu_library(
     visibility = ["//visibility:public"],
     alwayslink = 1,
 )
+
+xla_test(
+    name = "cupti_buffer_events_test",
+    size = "small",
+    srcs = ["cupti_buffer_events_test.cc"],
+    backends = ["cpu"],
+    copts = tf_profiler_copts() + tsl_copts(),
+    tags = [
+        "no_mac",
+    ],
+    deps = [
+        ":cupti_buffer_events",
+        ":cupti_collector",
+        ":cupti_tracer",
+        ":cupti_utils",
+        "@local_tsl//tsl/platform:test",
+        "@local_tsl//tsl/platform:test_main",
+    ],
+)

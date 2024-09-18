@@ -1558,10 +1558,16 @@ LogicalResult FullyConnectedOp::fold(FoldAdaptor adaptor,
     return failure();
   }
 
+  auto is_foldable = [](llvm::ArrayRef<int64_t> shape) {
+    return shape.size() == 1 || (shape.size() == 2 && shape.front() == 1);
+  };
+
+  const bool weights_foldable = weights_type.getShape().size() == 2;
+  const bool bias_foldable = !has_bias || is_foldable(bias_type.getShape());
+
   // Folding only implemented for 1D input, 2D weights and 1D bias
-  if (input_type.getShape().size() != 1 ||
-      weights_type.getShape().size() != 2 ||
-      (has_bias && bias_type.getShape().size() != 1)) {
+  if (!is_foldable(input_type.getShape()) || !bias_foldable ||
+      !weights_foldable) {
     return failure();
   }
 
@@ -3834,16 +3840,13 @@ OpFoldResult SelectOp::fold(FoldAdaptor adaptor) {
 // SumOp
 //===----------------------------------------------------------------------===//
 
-// TODO: b/351437662 - Expand for all reductions.
+// TODO: b/351437662 - Expand for all reductions. Currently this folds
+// the case where the reduction dims are all but the last.
 OpFoldResult SumOp::fold(FoldAdaptor adaptor) {
   auto input = adaptor.getInput();
   auto axes = adaptor.getAxes();
 
   if (!input || !axes) {
-    return {};
-  }
-
-  if (adaptor.getKeepDims()) {
     return {};
   }
 
@@ -3864,16 +3867,25 @@ OpFoldResult SumOp::fold(FoldAdaptor adaptor) {
     return {};
   }
 
-  llvm::SmallVector<int64_t> out_shape = {input_type.getShape().back()};
-  std::vector<float> out_data(out_shape[0], 0.0);
+  const int64_t slice_size = input_type.getShape().back();
+
+  std::vector<float> out_data(slice_size, 0.0);
 
   auto in_data = llvm::cast<DenseFPElementsAttr>(input);
 
   size_t flat_ind = 0;
   for (auto it = in_data.value_begin<float>(); it < in_data.value_end<float>();
        ++it) {
-    out_data[flat_ind % out_shape[0]] += *it;
+    out_data[flat_ind % slice_size] += *it;
     flat_ind++;
+  }
+
+  llvm::SmallVector<int64_t> out_shape;
+  if (adaptor.getKeepDims()) {
+    out_shape = llvm::SmallVector<int64_t>(getType().getRank(), 1);
+    out_shape.back() = slice_size;
+  } else {
+    out_shape = {slice_size};
   }
 
   return DenseFPElementsAttr::get(
