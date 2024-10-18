@@ -18,13 +18,25 @@ limitations under the License.
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/OpDefinition.h"
+#include "xla/python/ifrt/ir/ifrt_dialect.h"
+#include "xla/python/ifrt/ir/ifrt_ops.h"
 
 namespace xla {
 namespace ifrt {
 
+// Used for comparing CallOps without including control dependencies.
+struct IfrtCallOpInfo : llvm::DenseMapInfo<xla::ifrt::CallOp> {
+  static unsigned getHashValue(xla::ifrt::CallOp call_op);
+  static bool isEqual(xla::ifrt::CallOp lhs, xla::ifrt::CallOp rhs);
+};
+
 // Retrieves the function named "main" from the given module, if it exists, and
 // fails otherwise.
 mlir::func::FuncOp GetMainFunction(mlir::ModuleOp module);
+
+// Returns true if transferring between from and to array requires a reshard.
+bool IsReshard(xla::ifrt::IfrtArrayType from, xla::ifrt::IfrtArrayType to);
 
 }  // namespace ifrt
 }  // namespace xla

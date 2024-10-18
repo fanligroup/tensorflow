@@ -31,6 +31,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/base/dynamic_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
@@ -48,12 +49,14 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "xla/array.h"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
+#include "xla/backends/cpu/runtime/thread_pool_task_runner.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk_executor.h"
 #include "xla/client/executable_build_options.h"
-#include "xla/client/xla_computation.h"
+#include "xla/cpu_function_runtime.h"
 #include "xla/debug_options_flags.h"
 #include "xla/executable_run_options.h"
+#include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -867,6 +870,11 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> TfrtCpuClient::Compile(
   return Compile(xla_computation, options);
 }
 
+static bool IsAlignedData(void* ptr) {
+  return (absl::bit_cast<std::uintptr_t>(ptr) &
+          (cpu_function_runtime::MinAlign() - 1)) == 0;
+}
+
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 TfrtCpuClient::CreateViewOfDeviceBuffer(
     void* device_ptr, const Shape& shape, PjRtDevice* device,
@@ -876,6 +884,13 @@ TfrtCpuClient::CreateViewOfDeviceBuffer(
     return Unimplemented(
         "TfrtCpuClient::CreateViewOfDeviceBuffer does not support `stream` "
         "argument.");
+  }
+  if (!IsAlignedData(device_ptr)) {
+    return InvalidArgument(
+        "Can't create a view of buffer with unaligned data, ptr: %#x is not "
+        "aligned to %d bytes. ",
+        reinterpret_cast<std::uintptr_t>(device_ptr),
+        cpu_function_runtime::MinAlign());
   }
   absl::InlinedVector<tsl::AsyncValueRef<MaybeOwningCpuMemory>, 4> buffers;
   size_t byte_size = ShapeUtil::ByteSizeOf(shape);
@@ -1601,11 +1616,8 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
           cpu::Thunk::CustomCallExecuteParams custom_call_execute_params,
           cpu::Thunk::CustomCallExecuteParams::Create(&run_options));
 
-      cpu::Thunk::TaskRunner task_runner =
-          [&run_options](cpu::Thunk::Task task) {
-            run_options.intra_op_thread_pool()->getPool()->Schedule(
-                std::move(task));
-          };
+      cpu::ThreadPoolTaskRunner task_runner(
+          run_options.intra_op_thread_pool()->getPool());
 
       cpu::Thunk::ExecuteParams execute_params = {
           &cpu_executable->function_registry(),
@@ -1740,11 +1752,8 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
                 custom_call_params =
                     cpu::Thunk::CustomCallExecuteParams::Create(&run_options);
 
-            cpu::Thunk::TaskRunner task_runner =
-                [&run_options](cpu::Thunk::Task task) {
-                  run_options.intra_op_thread_pool()->getPool()->Schedule(
-                      std::move(task));
-                };
+            cpu::ThreadPoolTaskRunner task_runner(
+                run_options.intra_op_thread_pool()->getPool());
 
             if (collective_params.ok()) {
               cpu::Thunk::ExecuteParams execute_params = {

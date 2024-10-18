@@ -66,8 +66,6 @@ std::string AutoShardingOption::ToString() const {
     lines.push_back(absl::StrCat("reduce_scatter_cost: ", reduce_scatter_cost));
   }
 
-  lines.push_back(absl::StrCat("force_batch_dim_to_mesh_dim: ",
-                               force_batch_dim_to_mesh_dim));
   lines.push_back(absl::StrCat("allow_replicated_parameters: ",
                                allow_replicated_parameters));
   lines.push_back(
@@ -84,8 +82,6 @@ std::string AutoShardingOption::ToString() const {
       absl::StrCat("allow_mixed_mesh_shape: ", allow_mixed_mesh_shape));
   lines.push_back(absl::StrCat("solve_nd_sharding_iteratively: ",
                                solve_nd_sharding_iteratively));
-  lines.push_back(
-      absl::StrCat("force_simple_heuristic: ", force_simple_heuristic));
   lines.push_back(absl::StrCat("force_strategy: ", force_strategy));
 
   if (force_strategy) {
@@ -145,15 +141,16 @@ std::string AutoShardingOption::ToString() const {
   lines.push_back(absl::StrCat("insert_resharding_reshapes_for_non_dot_ops: ",
                                insert_resharding_reshapes_for_non_dot_ops));
 
+  if (num_dcn_slices.has_value()) {
+    lines.push_back(absl::StrCat("num_dcn_slices: ", *num_dcn_slices));
+  }
+
   return absl::StrJoin(lines, "\n");
 }
 
 // TODO(pratikf) The device mesh shape handling in this function currently does
 // not work when try_multiple_mesh_shapes is true. Fix it.
 absl::Status AutoShardingOption::CheckAndSetup() {
-  only_allow_divisible_input_output = true;
-  only_allow_divisible_intermediate = false;
-
   if (device_mesh_shape.empty()) {
     return absl::OutOfRangeError(
         "device_mesh_shape is empty and it needs to be specified.");
@@ -171,14 +168,16 @@ absl::Status AutoShardingOption::CheckAndSetup() {
   if (device_mesh_alpha.empty()) {
     // Generates simple device_mesh_alpha based on the size of
     // device_mesh_shape.
-    device_mesh_alpha = std::vector(device_mesh_shape.size(), kDeviceMeshAlpha);
+    device_mesh_alpha =
+        std::vector(device_mesh_shape.size(), kIciDeviceMeshAlpha);
     VLOG(0) << "Using default values for device_mesh_alpha: "
             << absl::StrJoin(device_mesh_alpha, ",");
   }
   if (device_mesh_beta.empty()) {
     // Generates simple device_mesh_beta based on the size of
     // device_mesh_shape.
-    device_mesh_beta = std::vector(device_mesh_shape.size(), kDeviceMeshBeta);
+    device_mesh_beta =
+        std::vector(device_mesh_shape.size(), kIciDeviceMeshBeta);
     VLOG(0) << "Using default values for device_mesh_beta: "
             << absl::StrJoin(device_mesh_beta, ",");
   }

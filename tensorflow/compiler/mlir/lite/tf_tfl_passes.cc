@@ -20,23 +20,27 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Transforms/Passes.h"  // from @llvm-project
+#include "stablehlo/transforms/Passes.h"  // from @stablehlo
 #include "tensorflow/compiler/mlir/lite/common/tfl_pass_config.h"
 #include "tensorflow/compiler/mlir/lite/converter_flags.pb.h"
+#include "tensorflow/compiler/mlir/lite/core/macros.h"
 #include "tensorflow/compiler/mlir/lite/quantization/quantization_passes.h"
 #include "tensorflow/compiler/mlir/lite/quantization/tensorflow/passes.h"
 #include "tensorflow/compiler/mlir/lite/stablehlo/transforms/legalize_tf_xla_call_module_to_stablehlo_pass.h"
-#include "tensorflow/compiler/mlir/lite/stablehlo/transforms/passes.h"
+#include "tensorflow/compiler/mlir/lite/stablehlo/transforms/stablehlo_passes.h"
 #include "tensorflow/compiler/mlir/lite/stablehlo/transforms/transforms.h"
 #include "tensorflow/compiler/mlir/lite/transforms/converter_pass_options_setter.h"
 #include "tensorflow/compiler/mlir/lite/transforms/pass.h"
 #include "tensorflow/compiler/mlir/lite/transforms/pass_registry_utils.h"
 #include "tensorflow/compiler/mlir/lite/transforms/passes.h"
+#include "tensorflow/compiler/mlir/lite/transforms/unfreeze_global_constants.h"
 #include "tensorflow/compiler/mlir/lite/utils/fake_quant_utils.h"
 #include "tensorflow/compiler/mlir/quantization/common/quantization_lib/quantization_config.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/passes.h"
@@ -123,7 +127,8 @@ void AddVariableFreezingFromGlobalTensorsPasses(
   pass_manager->addPass(mlir::tf_saved_model::CreateFreezeGlobalTensorsPass(
       /*allow_mutable_tensors=*/pass_config.enable_tflite_variables));
 
-  pass_manager->addPass(mlir::TFL::CreateUnfreezeMutableGlobalTensorsPass());
+  pass_manager->addPass(
+      mlir::TFL::Create<mlir::TFL::UnfreezeMutableGlobalTensorsPass>());
 }
 
 void AddDynamicRangeQuantizationPasses(const mlir::TFL::PassConfig& pass_config,
@@ -191,6 +196,13 @@ void AddPreQuantizationStableHloToTfPasses(
   // jax_to_tfl_flatbuffer.cc which can likely be updated to emit StableHLO
   // to be consistent with other entrypoints.
   pass_manager.addPass(mlir::mhlo::createHloLegalizeToStablehloPass());
+
+  // Expand backward compatibility with the given StableHLO version by
+  // decomposing newer StableHLO operations into equivalent operations supported
+  // by that older version.
+  pass_manager.addNestedPass<mlir::func::FuncOp>(
+      mlir::stablehlo::createStablehloCompatibilityExpanderPass(
+          {tflite_supported_stablehlo_version}));
 
   // Decompose CHLO into StableHLO ops
   pass_manager.addNestedPass<mlir::func::FuncOp>(
@@ -328,7 +340,7 @@ void AddPreVariableFreezingTFToTFLConversionPasses(
   // folded before being converted to tfl.quantize and tfl.dequantize ops.
   std::vector<std::string> target_ops = mlir::TFL::AllTfFakeQuantOps();
   mlir::TFL::RaiseCustomOpsPassOptions raise_custom_ops_pass_options;
-  raise_custom_ops_pass_options.target_ops_ = target_ops;
+  raise_custom_ops_pass_options.target_ops_ = llvm::to_vector(target_ops);
   pass_manager->addNestedPass<mlir::func::FuncOp>(
       mlir::TFL::CreateRaiseCustomOpsPass(raise_custom_ops_pass_options));
 
