@@ -36,6 +36,10 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/frontend_attributes.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
+#include "xla/hlo/analysis/hlo_ordering.h"
+#include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
@@ -43,18 +47,14 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/ir/hlo_reachability.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
+#include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/map_util.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/compile_time_cap.h"
 #include "xla/service/dump.h"
-#include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_buffer.h"
-#include "xla/service/hlo_dataflow_analysis.h"
-#include "xla/service/hlo_dce.h"
-#include "xla/service/hlo_ordering.h"
 #include "xla/service/hlo_value.h"
-#include "xla/service/tuple_simplifier.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
@@ -1514,6 +1514,18 @@ class CopyRemover {
                     int64_t* region_analysis_limit) {
     VLOG(2) << "Trying to remove " << copy->name();
     CHECK_NE(region_analysis_limit, nullptr);
+    if (copy->shape().has_layout() && copy->operand(0)->shape().has_layout()) {
+      if (copy->shape().layout().memory_space() == Layout::kHostMemorySpace &&
+          copy->operand(0)->shape().layout().memory_space() !=
+              Layout::kHostMemorySpace) {
+        return false;
+      }
+      if (copy->shape().layout().memory_space() != Layout::kHostMemorySpace &&
+          copy->operand(0)->shape().layout().memory_space() ==
+              Layout::kHostMemorySpace) {
+        return false;
+      }
+    }
 
     if (!ContainsKey(copy_map_, copy)) {
       VLOG(2) << copy->name() << " is not removable";

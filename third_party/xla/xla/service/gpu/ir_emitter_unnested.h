@@ -158,8 +158,6 @@ class IrEmitterUnnested : public IrEmitter {
   absl::Status EmitFusion(const HloFusionInstruction* instr);
   absl::Status EmitCopy(const HloInstruction* instr);
   absl::Status EmitAsyncCustomCallStart(const HloInstruction* instr);
-  absl::Status EmitSelectAndScatter(
-      const HloSelectAndScatterInstruction* instr);
   absl::Status EmitWhile(const HloInstruction* instr);
   absl::Status EmitInfeed(const HloInfeedInstruction* instr);
   absl::Status EmitOutfeed(const HloOutfeedInstruction* instr);
@@ -201,6 +199,10 @@ class IrEmitterUnnested : public IrEmitter {
   absl::Status EmitCopyDoneThunk(const HloInstruction* instr);
 
   absl::Status EmitHloInstruction(const HloInstruction* instr);
+
+  absl::Status EmitNcclGroupStartThunk(const HloInstruction* instr);
+
+  absl::Status EmitNcclGroupDoneThunk(const HloInstruction* instr);
 
   absl::Status EmitTargetElementLoop(
       const HloInstruction& hlo,

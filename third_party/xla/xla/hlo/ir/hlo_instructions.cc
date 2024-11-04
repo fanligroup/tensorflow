@@ -943,8 +943,12 @@ HloInstructionProto HloCollectiveInstruction::ToProto() const {
 void HloCollectiveInstruction::PrintExtraAttributesImpl(
     AttributePrinter& printer, const HloPrintOptions& options) const {
   HloChannelInstruction::PrintExtraAttributesImpl(printer, options);
-  printer.Next([this](Printer* printer) {
-    AppendCat(printer, "replica_groups=", device_list_.ToString());
+  printer.Next([this, &options](Printer* printer) {
+    VLOG(4) << name() << " replica_groups="
+            << device_list_.ToString(options.print_full_replica_group_list());
+
+    AppendCat(printer, "replica_groups=",
+              device_list_.ToString(options.print_full_replica_group_list()));
   });
   if (constrain_layout_) {
     printer.Next(
@@ -1209,6 +1213,40 @@ bool HloAllToAllInstruction::IdenticalSlowPathIgnoringChannelIdValues(
   return HloCollectiveInstruction::IdenticalSlowPathIgnoringChannelIdValues(
              other, eq_computations) &&
          split_dimension_ == casted_other.split_dimension();
+}
+
+HloRaggedAllToAllInstruction::HloRaggedAllToAllInstruction(
+    const Shape& shape, absl::Span<HloInstruction* const> operands,
+    const CollectiveDeviceList& device_list,
+    const std::optional<int64_t>& channel_id)
+    : HloCollectiveInstruction(HloOpcode::kRaggedAllToAll, shape, operands,
+                               device_list,
+                               /*constrain_layout=*/false, channel_id) {}
+
+HloRaggedAllToAllInstruction::HloRaggedAllToAllInstruction(
+    HloOpcode opcode, const Shape& shape,
+    absl::Span<HloInstruction* const> operands,
+    absl::Span<const ReplicaGroup> replica_groups,
+    const std::optional<int64_t>& channel_id)
+    : HloRaggedAllToAllInstruction(
+          shape, operands, CollectiveDeviceList(replica_groups), channel_id) {}
+
+std::unique_ptr<HloInstruction>
+HloRaggedAllToAllInstruction::CloneWithNewOperandsImpl(
+    const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+    HloCloneContext* /*context*/) const {
+  return std::make_unique<HloRaggedAllToAllInstruction>(
+      shape, new_operands, device_list(), channel_id());
+}
+
+HloInstructionProto HloRaggedAllToAllInstruction::ToProto() const {
+  HloInstructionProto proto = HloCollectiveInstruction::ToProto();
+  return proto;
+}
+
+void HloRaggedAllToAllInstruction::PrintExtraAttributesImpl(
+    AttributePrinter& printer, const HloPrintOptions& options) const {
+  HloCollectiveInstruction::PrintExtraAttributesImpl(printer, options);
 }
 
 HloCollectiveBroadcastInstruction::HloCollectiveBroadcastInstruction(

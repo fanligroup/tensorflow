@@ -37,11 +37,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/transforms/simplifiers/sub_byte_normalization.h"
 #include "xla/layout_util.h"
-#include "xla/primitive_util.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/hlo_creation_utils.h"
-#include "xla/service/sub_byte_normalization.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
@@ -149,7 +148,8 @@ bool IsFusibleCandidate(const HloInstruction& instr) {
     return false;
   }
 
-  if (IsNestableVariadicReduction(instr)) {
+  if (IsNestableVariadicReduction(instr) ||
+      IsNestableVariadicReduceWindow(instr)) {
     return false;
   }
 
@@ -299,7 +299,8 @@ void HorizontalLoopFusionImpl::FusionCandidates::Initialize(
       VLOG(2) << "sliced_input_fusion=" << sliced_input_fusion_
               << " rejects non-row-major fusion instr " << instr->ToString();
       continue;
-    } else if (AnyOpndIsParamSharedAmongFusions(instr, fusible_candidates)) {
+    } else if (sliced_input_fusion_ &&
+               AnyOpndIsParamSharedAmongFusions(instr, fusible_candidates)) {
       // Don't fuse fusions whose operands are parameter instructions that are
       // shared among fusions because we cannot i/o alias the produced
       // horizontal fusion due to the concat insertion.
@@ -316,10 +317,9 @@ void HorizontalLoopFusionImpl::FusionCandidates::Initialize(
 
   // Sort `fusible_instrs_` according to output types, the number of outputs,
   // instruction counts, output tensor element count. For sliced input fusion,
-  // we only fuse instructions with the same number/type of outputs and whose
-  // computations have the same instruction count. For kLoop fusion, we requires
-  // the fused instructions to have the same number/type of outputs and also the
-  // same output shape. We did a sort here so the fusion candidates is
+  // we only fuse instructions with the same number/type of outputs.
+  // For kLoop fusion, we in addition require the same output shape.
+  // We did a sort here so the fusion candidates is
   // populating a continuous span.
   std::stable_sort(
       fusible_instrs_.begin(), fusible_instrs_.end(),
@@ -338,52 +338,6 @@ void HorizontalLoopFusionImpl::FusionCandidates::Initialize(
         }
       });
 }
-
-// LINT.IfChange
-// Returns an estimate how many computation instructions will be emitted. The
-// logic roughly replicates the logic in `OptimizeLoopsPass` that computes
-// unroll factor.
-int64_t GetInstrUnrollCostOfFusible(const HloInstruction& instr) {
-  if (instr.opcode() == HloOpcode::kFusion) {
-    int64_t cost = 0;
-    for (HloInstruction* instr :
-         instr.fused_instructions_computation()->instructions()) {
-      cost += GetInstrUnrollCostOfFusible(*instr);
-    }
-    return cost;
-  }
-
-  // Instruction that only change indexing do not emit computation.
-  if (instr.opcode() == HloOpcode::kParameter ||
-      instr.opcode() == HloOpcode::kConstant ||
-      instr.opcode() == HloOpcode::kTuple ||
-      instr.opcode() == HloOpcode::kBroadcast ||
-      instr.opcode() == HloOpcode::kBitcast ||
-      instr.opcode() == HloOpcode::kReshape ||
-      instr.opcode() == HloOpcode::kTranspose ||
-      instr.opcode() == HloOpcode::kSlice) {
-    return 0;
-  }
-
-  if (!primitive_util::IsIntegralType(instr.shape().element_type())) {
-    // Integer instructions in math are ok, but many float ops lower to lots
-    // of instructions.
-    switch (instr.opcode()) {
-      case HloOpcode::kAbs:
-      case HloOpcode::kCeil:
-      case HloOpcode::kFloor:
-      case HloOpcode::kRoundNearestAfz:
-      case HloOpcode::kRoundNearestEven:
-      case HloOpcode::kRsqrt:
-      case HloOpcode::kSqrt:
-        return 20;
-      default:
-        break;
-    }
-  }
-  return 1;
-}
-// LINT.ThenChange(//tensorflow/compiler/xla/service/gpu/fusions/transforms/optimize_loops.cc)
 
 // Gets a next span of fusion instructions to be fused.
 absl::Span<HloInstruction*>
@@ -414,18 +368,10 @@ HorizontalLoopFusionImpl::FusionCandidates::GetNextSpanOfFusions() {
     }
   }();
 
-  // LINT.IfChange
-  // `OptimizeLoopsPass` uses max cost of 400 for unrolled loop. We can assume
-  // that the vectorization loop has 4 steps, so the cost of the fusion
-  // shouldn't exceed 100.
-  constexpr int64_t kMaxInstrUnrollCost = 100;
-  // LINT.ThenChange(//tensorflow/compiler/xla/service/gpu/fusions/transforms/optimize_loops.cc)
-
   size_t left = pos_;
   size_t right = pos_;
   size_t accum_num_outputs = 0;
   size_t accum_io_size = 0;
-  size_t accum_instr_unroll_cost = 0;
 
   for (; right < fusible_instrs_.size(); ++right) {
     if (GetUniqueOutputTypeOfFusible(*fusible_instrs_[left]) !=
@@ -438,15 +384,6 @@ HorizontalLoopFusionImpl::FusionCandidates::GetNextSpanOfFusions() {
         GetOutputSizeOfFusible(*fusible_instrs_[right])) {
       // Cannot fuse computations who have different numbers of outputs.
       VLOG(2) << "different number of outputs";
-      break;
-    }
-    if (GetInstrCountOfFusible(*fusible_instrs_[left]) !=
-        GetInstrCountOfFusible(*fusible_instrs_[right])) {
-      // Do not fuse computations of different instruction counts as it may
-      // introduce control divergence. This is a very simple heuristic to avoid
-      // fusing computations with too much discrepancy and we may improve it
-      // when the needs arise.
-      VLOG(2) << "different instruction count";
       break;
     }
     if (!sliced_input_fusion_ &&
@@ -468,13 +405,6 @@ HorizontalLoopFusionImpl::FusionCandidates::GetNextSpanOfFusions() {
     accum_io_size += fusible_instrs_.at(right)->operand_count() + num_outputs;
     if (accum_io_size * 8 >= kMaxCudaParamSize) {
       VLOG(2) << "hit max cuda param size: " << accum_io_size;
-      break;
-    }
-
-    accum_instr_unroll_cost +=
-        GetInstrUnrollCostOfFusible(*fusible_instrs_[right]);
-    if (accum_instr_unroll_cost >= kMaxInstrUnrollCost) {
-      VLOG(2) << "hit max instr unroll cost: " << accum_instr_unroll_cost;
       break;
     }
   }
@@ -775,7 +705,7 @@ absl::StatusOr<bool> HorizontalLoopFusionImpl::Run() {
         bool loop_fusion_changed,
         FuseConsumerOperands(consumer, false, to_fuse_candidates));
 
-    // for the remaining operands with diffent shape, we further try fuse them
+    // for the remaining operands with different shape, we further try fuse them
     // into kInput fusion instruction.
     TF_ASSIGN_OR_RETURN(
         bool sliced_input_fusion_changed,
@@ -799,11 +729,14 @@ absl::StatusOr<bool> HorizontalLoopFusion::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   VLOG(2) << "Run horizontal fusion.";
 
-  // Run on the entry computation is actually enough.
-  TF_ASSIGN_OR_RETURN(bool changed,
-                      RunOnComputation(module->entry_computation()));
+  bool any_changed = false;
+  for (HloComputation* computation :
+       GetFusibleComputations(*module, execution_threads)) {
+    TF_ASSIGN_OR_RETURN(bool changed, RunOnComputation(computation));
+    any_changed |= changed;
+  }
 
-  if (changed) {
+  if (any_changed) {
     // Correctly set element_size_in_bits for any sub-byte added slice and
     // concatenate instructions
     TF_ASSIGN_OR_RETURN(
@@ -812,7 +745,7 @@ absl::StatusOr<bool> HorizontalLoopFusion::Run(
             module));
   }
 
-  return changed;
+  return any_changed;
 }
 
 }  // namespace gpu
