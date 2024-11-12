@@ -18,15 +18,18 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/log/absl_check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "tensorflow/lite/experimental/litert/c/litert_model.h"
-#include "tensorflow/lite/experimental/litert/cc/litert_support.h"
-#include "tensorflow/lite/experimental/litert/core/litert_model_init.h"
+#include "tensorflow/lite/experimental/litert/c/litert_common.h"
+#include "tensorflow/lite/experimental/litert/cc/litert_expected.h"
+#include "tensorflow/lite/experimental/litert/cc/litert_model.h"
+#include "tensorflow/lite/experimental/litert/cc/litert_model_predicates.h"
+#include "tensorflow/lite/experimental/litert/core/model/model_load.h"
 #include "tsl/platform/platform.h"
 
 namespace litert {
@@ -65,18 +68,37 @@ absl::StatusOr<std::vector<char>> LoadBinaryFile(absl::string_view filename) {
   return buffer;
 }
 
-internal::UniqueLiteRtModel LoadTestFileModel(absl::string_view filename) {
-  LiteRtModel model = nullptr;
-  LITERT_CHECK_STATUS_OK(
-      internal::LoadModelFromFile(GetTestFilePath(filename).data(), &model));
-  ABSL_CHECK_NE(model, nullptr);
-  return internal::UniqueLiteRtModel(model);
+Model LoadTestFileModel(absl::string_view filename) {
+  auto model = internal::LoadModelFromFile(GetTestFilePath(filename).data());
+  return std::move(model.Value());
 }
 
 void TouchTestFile(absl::string_view filename, absl::string_view dir) {
   std::filesystem::path path(dir.data());
   path.append(filename.data());
   std::ofstream f(path);
+}
+
+bool ValidateTopology(const std::vector<Op>& ops) {
+  for (const auto& op : ops) {
+    const auto inputs = op.Inputs();
+    for (int i = 0; i < inputs.size(); ++i) {
+      if (!MatchUse(inputs.at(i), UseInfo(op.Code(), i))) {
+        return false;
+      }
+    }
+    const auto outputs = op.Outputs();
+    for (int i = 0; i < outputs.size(); ++i) {
+      const auto defining_op = outputs.at(i).DefiningOp();
+      if (!defining_op.has_value()) {
+        return false;
+      }
+      if (defining_op->op != op.Get() || defining_op->op_output_index != i) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 }  // namespace testing

@@ -144,6 +144,33 @@ class TritonGemmTestWithoutTritonGemmAny : public TritonGemmTest {
   }
 };
 
+TEST_F(TritonGemmTest, FP8DotSmallTileDoesNotCrash) {
+  if (!GetCudaComputeCapability().IsAtLeastHopper()) {
+    GTEST_SKIP() << "Doesn't pass on pre-Hopper GPUs.";
+  }
+
+  constexpr std::string_view kHloText = R"(
+HloModule m
+
+triton_dot {
+  %parameter_0 = f8e4m3fn[32,32]{1,0} parameter(0)
+  %parameter_1 = f8e4m3fn[32,32]{1,0} parameter(1)
+  ROOT %dot.1643 = bf16[32,32]{1,0} dot(f8e4m3fn[32,32]{1,0} %parameter_0, f8e4m3fn[32,32]{0,1} %parameter_1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY e {
+  p0 = f8e4m3fn[32,32]{1,0} parameter(0)
+  p1 = f8e4m3fn[32,32]{1,0} parameter(1)
+  ROOT _ = bf16[32,32] fusion(p0, p1), kind=kCustom, calls=triton_dot,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+    triton_gemm_config: {"block_m":16,"block_n":16,"block_k":16,
+                         "split_k":1,"num_stages":2,"num_warps":2,
+                         "num_ctas":1}}}
+})";
+
+  EXPECT_TRUE(Run(kHloText, /*run_hlo_passes=*/false));
+}
+
 TEST_F(TritonGemmTest, RejectDotInt4HLO) {
   constexpr std::string_view kHloText = R"(
     HloModule t
@@ -162,7 +189,7 @@ TEST_F(TritonGemmTest, RejectDotInt4HLO) {
               StatusIs(tsl::error::INVALID_ARGUMENT));
 }
 
-TEST_F(TritonGemmTest, RejectInt4NegatePlusConvertHLO) {
+TEST_F(TritonGemmTest, Int4NegatePlusConvertHLO) {
   constexpr std::string_view kHloText = R"(
     HloModule t
 
@@ -178,8 +205,8 @@ TEST_F(TritonGemmTest, RejectInt4NegatePlusConvertHLO) {
           rhs_batch_dims={0}
     }
   )";
-  EXPECT_THAT(GetOptimizedModule(kHloText).status(),
-              StatusIs(tsl::error::INVALID_ARGUMENT));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 TEST_F(TritonGemmTest, RejectTritonFusionForInt4WithMinorBatchDim) {

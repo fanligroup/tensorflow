@@ -16,36 +16,37 @@
 #define TENSORFLOW_LITE_EXPERIMENTAL_LITERT_TEST_COMMON_H_
 
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "tensorflow/lite/experimental/litert/core/litert_model_init.h"
+#include "tensorflow/lite/experimental/litert/cc/litert_model.h"
 
-#define _ASSERT_RESULT_OK_ASSIGN(decl, expr, result) \
-  auto result = (expr);                              \
-  ASSERT_TRUE(result.HasValue());                    \
+#define _LITERT_ASSERT_RESULT_OK_ASSIGN(decl, expr, result) \
+  auto result = (expr);                                     \
+  ASSERT_TRUE(result.HasValue());                           \
   decl = result.Value();
 
-#define ASSERT_RESULT_OK_ASSIGN(decl, expr) \
-  _ASSERT_RESULT_OK_ASSIGN(decl, expr, _CONCAT_NAME(_result, __COUNTER__))
+#define LITERT_ASSERT_RESULT_OK_ASSIGN(decl, expr) \
+  _LITERT_ASSERT_RESULT_OK_ASSIGN(decl, expr,      \
+                                  _CONCAT_NAME(_result, __COUNTER__))
 
-#define _ASSERT_RESULT_OK_MOVE(decl, expr, result) \
-  auto result = (expr);                            \
-  ASSERT_TRUE(result.HasValue());                  \
+#define _LITERT_ASSERT_RESULT_OK_MOVE(decl, expr, result) \
+  auto result = (expr);                                   \
+  ASSERT_TRUE(result.HasValue());                         \
   decl = std::move(result.Value());
 
-#define ASSERT_RESULT_OK_MOVE(decl, expr) \
-  _ASSERT_RESULT_OK_MOVE(decl, expr, _CONCAT_NAME(_result, __COUNTER__))
+#define LITERT_ASSERT_RESULT_OK_MOVE(decl, expr) \
+  _LITERT_ASSERT_RESULT_OK_MOVE(decl, expr, _CONCAT_NAME(_result, __COUNTER__))
 
-#define ASSERT_STATUS_HAS_CODE(expr, code) \
-  {                                        \
-    LiteRtStatus status = (expr);          \
-    ASSERT_EQ(status, code);               \
+#define LITERT_ASSERT_STATUS_HAS_CODE(expr, code) \
+  {                                               \
+    LiteRtStatus status = (expr);                 \
+    ASSERT_EQ(status, code);                      \
   }
 
-#define ASSERT_STATUS_OK(expr) ASSERT_STATUS_HAS_CODE(expr, kLiteRtStatusOk);
+#define LITERT_ASSERT_STATUS_OK(expr) \
+  LITERT_ASSERT_STATUS_HAS_CODE(expr, kLiteRtStatusOk);
 
 namespace litert {
 namespace testing {
@@ -54,9 +55,11 @@ std::string GetTestFilePath(absl::string_view filename);
 
 absl::StatusOr<std::vector<char>> LoadBinaryFile(absl::string_view filename);
 
-internal::UniqueLiteRtModel LoadTestFileModel(absl::string_view filename);
+Model LoadTestFileModel(absl::string_view filename);
 
 void TouchTestFile(absl::string_view filename, absl::string_view dir);
+
+bool ValidateTopology(const std::vector<Op>& ops);
 
 }  // namespace testing
 }  // namespace litert

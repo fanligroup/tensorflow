@@ -614,6 +614,10 @@ class Delegate {
 #endif
   }
 
+  bool enable_slinky() const {
+    return (options_.flags & TFLITE_XNNPACK_DELEGATE_FLAG_ENABLE_SLINKY) != 0;
+  }
+
   bool support_variable_ops() const {
     if (options_.flags & TFLITE_XNNPACK_DELEGATE_FLAG_VARIABLE_OPERATORS) {
       return true;
@@ -1150,6 +1154,11 @@ class Subgraph {
     }
     if (context->profiler) {
       flags |= XNN_FLAG_BASIC_PROFILING;
+    }
+    if (delegate.enable_slinky()) {
+      // TODO: this flag isn't yet part of the public XNNPACK API
+      constexpr uint32_t XNN_FLAG_SLINKY_ENABLED = 0x40000000;
+      flags |= XNN_FLAG_SLINKY_ENABLED;
     }
 
     if (delegate.weight_cache_provider_.IsActive() &&
@@ -4240,7 +4249,8 @@ class Subgraph {
         // solution for delegating to `qp8_f32_qc4w` GEMM kernels.
         const size_t convert_flags =
             (filter_datatype == xnn_datatype_qcint4 &&
-             filter_tensor.params.zero_point == 8)
+             (filter_tensor.params.zero_point == 0 ||
+              filter_tensor.params.zero_point == 8))
                 ? 0x00000080 /*XNN_FLAG_MAYBE_PACK_FOR_GEMM*/
                 : 0;
         status = xnn_define_convert(
@@ -4621,24 +4631,11 @@ class Subgraph {
     }
 
     if (subgraph != nullptr) {
-      std::array<size_t, XNN_MAX_TENSOR_DIMS> reduction_axes;
+      std::array<int64_t, XNN_MAX_TENSOR_DIMS> reduction_axes;
       for (int i = 0; i < num_reduction_axes; ++i) {
-        if (axes_data[i] < 0) {
-          if (IsDynamicTensor(&input_tensor)) {
-            TF_LITE_MAYBE_KERNEL_LOG(
-                logging_context,
-                "unable to delegate %s node #%d: negative reduction axis only "
-                "supported for non-dynamic input tensors",
-                EnumNameBuiltinOperator(tflite_operator), node_index);
-            return kTfLiteError;
-          }
-          reduction_axes[i] = axes_data[i] + NumDimensions(&input_tensor);
-        } else {
-          reduction_axes[i] = axes_data[i];
-        }
+        reduction_axes[i] = axes_data[i];
       }
-      std::sort(&reduction_axes[0], &reduction_axes[num_reduction_axes]);
-      if (xnn_define_static_reduce(
+      if (xnn_define_static_reduce_v2(
               subgraph, reduce_operator, num_reduction_axes,
               reduction_axes.data(),
               /*input_id=*/input_output_tensors.at(node->inputs->data[0]),

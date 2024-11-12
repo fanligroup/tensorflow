@@ -902,6 +902,7 @@ cc_library(
     deps = [
         ":call_graph",
         ":hlo_domain_isolator",
+        "//xla:side_effect_util",
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -935,6 +936,7 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/utils:hlo_matchers",
+        "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
@@ -1132,6 +1134,7 @@ cc_library(
         ":hlo_value",
         "//xla:debug_options_flags",
         "//xla:shape_util",
+        "//xla:status_macros",
         "//xla:util",
         "//xla:xla_proto_cc",
         "//xla/hlo/analysis:hlo_alias_analysis",
@@ -1150,6 +1153,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@local_tsl//tsl/platform:errors",
+        "@local_tsl//tsl/platform:status",
         "@local_tsl//tsl/platform:statusor",
     ],
 )
@@ -1164,6 +1168,7 @@ xla_cc_test(
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/transforms/collectives:async_collective_creator",
+        "//xla/service:legalize_scheduling_annotations",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
@@ -1459,7 +1464,6 @@ cc_library(
         "//xla/hlo/ir:hlo_module_group",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/stream_executor:dnn",
-        "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
@@ -2116,7 +2120,6 @@ cc_library(
         "//xla/hlo/transforms:op_expander_pass",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/types:span",
         "@local_tsl//tsl/platform:logging",
         "@local_tsl//tsl/platform:statusor",
     ],
@@ -4230,6 +4233,7 @@ cc_library(
     deps = [
         ":algorithm_util",
         ":float8_fnuz_ir_emitter",
+        "//xla:comparison_util",
         "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -4245,6 +4249,7 @@ cc_library(
         "//xla/service/llvm_ir:loop_emitter",
         "//xla/service/llvm_ir:math_ops",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -4255,6 +4260,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TransformUtils",
         "@local_tsl//tsl/platform:logging",
+        "@local_tsl//tsl/platform:statusor",
     ],
 )
 
@@ -6261,6 +6267,41 @@ xla_cc_test(
 cc_library(
     name = "collective_utils",
     hdrs = ["collective_utils.h"],
+)
+
+cc_library(
+    name = "legalize_scheduling_annotations",
+    srcs = ["legalize_scheduling_annotations.cc"],
+    hdrs = ["legalize_scheduling_annotations.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "legalize_scheduling_annotations_test",
+    srcs = ["legalize_scheduling_annotations_test.cc"],
+    deps = [
+        ":legalize_scheduling_annotations",
+        "//xla:test_helpers",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@local_tsl//tsl/platform:statusor",
+    ],
 )
 
 exports_files(["xla_aot_compile_test_gpu_target_config.prototxt"])

@@ -676,7 +676,7 @@ tf_cc_test(
         "@local_tsl//tsl/platform:statusor",
         "@local_xla//xla/pjrt:pjrt_client",
         "@local_xla//xla/pjrt:pjrt_common",
-        "@local_xla//xla/pjrt:tfrt_cpu_pjrt_client",
+        "@local_xla//xla/pjrt/cpu:cpu_client",
         "@local_xla//xla/tests:literal_test_util",
         "@local_xla//xla/tsl/framework:device_id_utils",
         "@local_xla//xla/tsl/lib/core:status_test_util",
@@ -1750,8 +1750,8 @@ cc_library(
         "//tensorflow/compiler/tf2xla:common",
         "//tensorflow/core:framework",
         "@local_xla//xla:shape_util",
-        "@local_xla//xla/stream_executor",
         "@local_xla//xla/stream_executor:device_memory",
+        "@local_xla//xla/stream_executor:stream",
         "@tf_runtime//:async_value",
     ],
 )
@@ -1769,8 +1769,8 @@ cc_library(
         "//tensorflow/compiler/tf2xla:common",
         "//tensorflow/core:framework",
         "@local_xla//xla:shape_util",
-        "@local_xla//xla/stream_executor",
         "@local_xla//xla/stream_executor:device_memory",
+        "@local_xla//xla/stream_executor:stream",
         "@tf_runtime//:async_value",
     ],
 )
@@ -1796,9 +1796,10 @@ tf_cuda_only_cc_test(
         "//tensorflow/core/framework:tensor_testutil",
         "@com_google_googletest//:gtest_main",
         "@local_xla//xla:shape_util",
-        "@local_xla//xla/stream_executor",
         "@local_xla//xla/stream_executor:device_memory",
         "@local_xla//xla/stream_executor:platform_manager",
+        "@local_xla//xla/stream_executor:stream",
+        "@local_xla//xla/stream_executor:stream_executor_h",
     ],
 )
 
@@ -1859,6 +1860,7 @@ tf_cc_test(
         "@local_xla//xla/client:local_client",
         "@local_xla//xla/pjrt:pjrt_client",
         "@local_xla//xla/pjrt:tfrt_cpu_pjrt_client",
+        "@local_xla//xla/pjrt/cpu:cpu_client",
     ],
 )
 
@@ -1976,6 +1978,6 @@ tf_cuda_cc_test(
         "//tensorflow/core/tfrt/common:pjrt_util",
         "//tensorflow/core/tpu:tpu_defs",
         "@com_google_googletest//:gtest_main",
-        "@local_xla//xla/pjrt:tfrt_cpu_pjrt_client",
+        "@local_xla//xla/pjrt/cpu:cpu_client",
     ],
 )
